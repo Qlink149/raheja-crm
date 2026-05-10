@@ -111,6 +111,7 @@ class LeadService:
             try:
                 seed_key = generate_seed_key(row)
                 lead_data["_seed_key"] = seed_key
+                lead_data["futwork_sync_status"] = "pending"
 
                 existing = await self.db.leads.find_one(
                     {"_seed_key": seed_key}, {"_id": 1}
@@ -173,7 +174,33 @@ class LeadService:
                     return fid
         return ""
 
-    async def push_to_futwork(self, leads: List[Dict[str, Any]]) -> bool:
+    async def apply_lead_futwork_sync(
+        self,
+        *,
+        mobile_digits_10: str,
+        status: str,
+        futwork_lead_id: Optional[str] = None,
+        campaign_id: Optional[str] = None,
+    ) -> None:
+        """Update futwork_sync_status (and optional ids) for a lead matched by 10-digit mobile."""
+        if len(mobile_digits_10) != 10:
+            return
+        flt: Dict[str, Any] = {"mobile_digits": mobile_digits_10}
+        doc: Dict[str, Any] = {
+            "futwork_sync_status": status,
+            "updated_at": datetime.utcnow(),
+        }
+        if futwork_lead_id:
+            doc["futwork_lead_id"] = futwork_lead_id
+        if campaign_id:
+            doc["campaign_id"] = campaign_id
+        await self.db.leads.update_one(flt, {"$set": doc})
+
+    async def push_to_futwork(
+        self,
+        leads: List[Dict[str, Any]],
+        campaign_id: Optional[str] = None,
+    ) -> bool:
         """
         Push leads to Futwork Platform API.
 
@@ -209,16 +236,40 @@ class LeadService:
         try:
             async with httpx.AsyncClient(timeout=30.0) as http_client:
                 for lead in leads:
-                    # Phone — prefer recipientPhoneNumber col, then normalized digits
-                    phone = (
+                    raw_phone = (
                         lead.get("recipientPhoneNumber")
                         or lead.get("mobile_digits")
                         or lead.get("mobile", "")
                     )
-                    if not phone:
+                    db_digits = (lead.get("mobile_digits") or "").strip()
+                    db_digits = "".join(c for c in db_digits if c.isdigit())[-10:]
+
+                    if not raw_phone:
+                        if len(db_digits) == 10:
+                            await self.apply_lead_futwork_sync(
+                                mobile_digits_10=db_digits,
+                                status="failed",
+                                campaign_id=campaign_id,
+                            )
+                        failed += 1
                         continue
 
-                    # Name — prefer customer_name col (Futwork CSV header), then full_name
+                    phone = "".join(c for c in str(raw_phone) if c.isdigit())[-10:]
+                    match_digits = phone if len(phone) == 10 else db_digits
+
+                    if len(phone) != 10:
+                        logger.warning(
+                            "Skipping lead due to invalid phone length: %s", phone
+                        )
+                        if len(match_digits) == 10:
+                            await self.apply_lead_futwork_sync(
+                                mobile_digits_10=match_digits,
+                                status="failed",
+                                campaign_id=campaign_id,
+                            )
+                        failed += 1
+                        continue
+
                     name = (
                         lead.get("customer_name")
                         or lead.get("full_name")
@@ -233,11 +284,19 @@ class LeadService:
                     }
 
                     try:
-                        logger.info(f"FUTWORK PUSH REQUEST | URL: {endpoint} | Headers: {headers} | Payload: {payload}")
+                        logger.info(
+                            "FUTWORK PUSH REQUEST | URL: %s | Payload: %s",
+                            endpoint,
+                            payload,
+                        )
                         response = await http_client.post(
                             endpoint, json=payload, headers=headers
                         )
-                        logger.info(f"FUTWORK PUSH RESPONSE | Status: {response.status_code} | Body: {response.text}")
+                        logger.info(
+                            "FUTWORK PUSH RESPONSE | Status: %s | Body: %s",
+                            response.status_code,
+                            response.text,
+                        )
                         response.raise_for_status()
                         pushed += 1
 
@@ -246,28 +305,47 @@ class LeadService:
                         except Exception:
                             body = None
                         futwork_lead_id = self._extract_futwork_lead_id(body)
-                        if futwork_lead_id:
-                            digits_only = "".join(c for c in str(phone) if c.isdigit())[-10:]
-                            if digits_only:
-                                await self.db.leads.update_one(
-                                    {"mobile_digits": digits_only},
-                                    {"$set": {
-                                        "futwork_lead_id": futwork_lead_id,
-                                        "updated_at": datetime.utcnow(),
-                                    }},
-                                )
+                        await self.apply_lead_futwork_sync(
+                            mobile_digits_10=phone,
+                            status="pushed",
+                            futwork_lead_id=futwork_lead_id or None,
+                            campaign_id=campaign_id,
+                        )
                     except httpx.HTTPStatusError as e:
-                        logger.error(f"Failed to push lead {phone} to Futwork | HTTPStatusError: {e} | Response Body: {e.response.text}")
+                        logger.error(
+                            "Failed to push lead %s to Futwork | HTTPStatusError: %s | Response Body: %s",
+                            phone,
+                            e,
+                            e.response.text if e.response else "",
+                            exc_info=True,
+                        )
+                        await self.apply_lead_futwork_sync(
+                            mobile_digits_10=phone,
+                            status="failed",
+                            campaign_id=campaign_id,
+                        )
                         failed += 1
                     except Exception as e:
-                        logger.error(f"Failed to push lead {phone} to Futwork: {e}")
+                        logger.error(
+                            "Failed to push lead %s to Futwork: %s",
+                            phone,
+                            e,
+                            exc_info=True,
+                        )
+                        await self.apply_lead_futwork_sync(
+                            mobile_digits_10=phone,
+                            status="failed",
+                            campaign_id=campaign_id,
+                        )
                         failed += 1
 
             logger.info(
-                f"Futwork push complete: pushed={pushed}, failed={failed}, "
-                f"total={len(leads)}"
+                "Futwork push complete: pushed=%s, failed=%s, total=%s",
+                pushed,
+                failed,
+                len(leads),
             )
             return failed == 0
         except Exception as e:
-            logger.error(f"Futwork push_to_futwork error: {e}")
+            logger.error("Futwork push_to_futwork error: %s", e, exc_info=True)
             return False

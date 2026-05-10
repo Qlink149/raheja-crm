@@ -34,6 +34,8 @@ async def initialize_db():
     await db.leads.create_index("_seed_key")
     # Covers the OR-arm in the Futwork webhook lead lookup (futwork_lead_id).
     await db.leads.create_index("futwork_lead_id")
+    await db.leads.create_index("campaign_id")
+    await db.leads.create_index([("campaign_id", 1), ("futwork_sync_status", 1)])
 
     # Lead — filter indexes (used by virtual customer page)
     await db.leads.create_index("budget_category")

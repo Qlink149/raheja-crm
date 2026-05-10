@@ -73,6 +73,7 @@ class CampaignService:
                 "live_status": default_live_status(),
                 "dispositions": {
                     "interested": 0,
+                    "semiInterested": 0,
                     "callback": 0,
                     "notInterested": 0,
                     "noAnswer": 0
@@ -189,6 +190,142 @@ class CampaignService:
         )
         return docs
 
+    async def _push_one_lead_to_futwork(
+        self,
+        http_client: httpx.AsyncClient,
+        lead: Dict[str, Any],
+        *,
+        campaign_id: Optional[str] = None,
+    ) -> bool:
+        """POST one lead to Futwork. Updates Mongo futwork_sync_status. Returns True on HTTP success."""
+        ls = LeadService(self.db)
+        endpoint = (
+            f"https://platform.futwork.ai/api/campaigns/"
+            f"{settings.FUTWORK_CAMPAIGN_ID}/leads"
+        )
+        headers = {
+            "x-api-key": settings.FUTWORK_API_KEY,
+            "Content-Type": "application/json",
+        }
+        raw_phone = lead.get("mobile_digits") or lead.get("mobile", "")
+        db_digits = "".join(c for c in str(lead.get("mobile_digits") or "") if c.isdigit())[
+            -10:
+        ]
+
+        if not (raw_phone or "").strip():
+            if len(db_digits) == 10:
+                await ls.apply_lead_futwork_sync(
+                    mobile_digits_10=db_digits,
+                    status="failed",
+                    campaign_id=campaign_id,
+                )
+            return False
+
+        phone = "".join(c for c in str(raw_phone) if c.isdigit())[-10:]
+        match_digits = phone if len(phone) == 10 else db_digits
+
+        if len(phone) != 10:
+            logger.warning(
+                "Skipping lead %s due to invalid phone: %s",
+                lead.get("full_name"),
+                phone,
+            )
+            if len(match_digits) == 10:
+                await ls.apply_lead_futwork_sync(
+                    mobile_digits_10=match_digits,
+                    status="failed",
+                    campaign_id=campaign_id,
+                )
+            return False
+
+        payload = {
+            "recipientPhoneNumber": phone,
+            "recipientData": {
+                "customer_name": lead.get("full_name", "Unknown"),
+            },
+        }
+
+        try:
+            response = await http_client.post(endpoint, json=payload, headers=headers)
+            response.raise_for_status()
+            try:
+                body = response.json()
+            except Exception:
+                body = None
+            futwork_lead_id = LeadService._extract_futwork_lead_id(body)
+            await ls.apply_lead_futwork_sync(
+                mobile_digits_10=phone,
+                status="pushed",
+                futwork_lead_id=futwork_lead_id if futwork_lead_id else None,
+                campaign_id=campaign_id,
+            )
+            return True
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                "Failed to push lead %s to Futwork | HTTPStatusError: %s",
+                phone,
+                e,
+                exc_info=True,
+            )
+            await ls.apply_lead_futwork_sync(
+                mobile_digits_10=phone,
+                status="failed",
+                campaign_id=campaign_id,
+            )
+            return False
+        except Exception as e:
+            logger.error(
+                "Failed to push lead %s to Futwork: %s",
+                phone,
+                e,
+                exc_info=True,
+            )
+            await ls.apply_lead_futwork_sync(
+                mobile_digits_10=phone,
+                status="failed",
+                campaign_id=campaign_id,
+            )
+            return False
+
+    async def retry_failed_leads(self, campaign_id: str) -> Dict[str, Any]:
+        """Re-push leads with futwork_sync_status failed for this campaign."""
+        failed_leads = await self.db.leads.find(
+            {"campaign_id": campaign_id, "futwork_sync_status": "failed"},
+            {"_id": 0},
+        ).to_list(length=10000)
+
+        if not settings.FUTWORK_API_KEY or not settings.FUTWORK_CAMPAIGN_ID:
+            logger.warning("Futwork credentials missing. Retry aborted.")
+            return {
+                "retried": 0,
+                "succeeded": 0,
+                "still_failed": len(failed_leads),
+            }
+
+        succeeded = 0
+        still_failed = 0
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as http_client:
+                for lead in failed_leads:
+                    ok = await self._push_one_lead_to_futwork(
+                        http_client,
+                        lead,
+                        campaign_id=campaign_id,
+                    )
+                    if ok:
+                        succeeded += 1
+                    else:
+                        still_failed += 1
+        except Exception as e:
+            logger.error("retry_failed_leads: unexpected error: %s", e, exc_info=True)
+            raise
+
+        return {
+            "retried": len(failed_leads),
+            "succeeded": succeeded,
+            "still_failed": still_failed,
+        }
+
     async def create_campaign(self, name: str, agent_id: str, audience_filters: Dict[str, Any]) -> Dict[str, Any]:
         # 1. Build Audience Query
         query = {}
@@ -212,72 +349,48 @@ class CampaignService:
         if target_count == 0:
             raise ValueError("No leads found matching the selected filters")
 
+        campaign_uuid = str(uuid.uuid4())
+        lead_ids = [lid for l in leads_to_push if l.get("id")]
+        if lead_ids:
+            await self.db.leads.update_many(
+                {"id": {"$in": lead_ids}},
+                {
+                    "$set": {
+                        "campaign_id": campaign_uuid,
+                        "futwork_sync_status": "pending",
+                        "updated_at": datetime.utcnow(),
+                    }
+                },
+            )
+
         # 3. Push to Futwork API (if configured)
         futwork_status = "scheduled"
         if settings.FUTWORK_API_KEY and settings.FUTWORK_CAMPAIGN_ID:
             try:
                 pushed = 0
                 failed = 0
-                endpoint = (
-                    f"https://platform.futwork.ai/api/campaigns/"
-                    f"{settings.FUTWORK_CAMPAIGN_ID}/leads"
-                )
-                push_headers = {
-                    "x-api-key": settings.FUTWORK_API_KEY,
-                    "Content-Type": "application/json",
-                }
 
                 async with httpx.AsyncClient(timeout=30.0) as http_client:
                     for lead in leads_to_push:
-                        phone = (
-                            lead.get("mobile_digits")
-                            or lead.get("mobile", "")
+                        ok = await self._push_one_lead_to_futwork(
+                            http_client,
+                            lead,
+                            campaign_id=campaign_uuid,
                         )
-                        if not phone:
-                            continue
-
-                        payload = {
-                            "recipientPhoneNumber": phone,
-                            "recipientData": {
-                                "customer_name": lead.get("full_name", "Unknown"),
-                            },
-                        }
-
-                        try:
-                            response = await http_client.post(
-                                endpoint, json=payload, headers=push_headers
-                            )
-                            response.raise_for_status()
+                        if ok:
                             pushed += 1
-
-                            try:
-                                body = response.json()
-                            except Exception:
-                                body = None
-                            futwork_lead_id = LeadService._extract_futwork_lead_id(body)
-                            if futwork_lead_id:
-                                digits_only = "".join(
-                                    c for c in str(phone) if c.isdigit()
-                                )[-10:]
-                                if digits_only:
-                                    await self.db.leads.update_one(
-                                        {"mobile_digits": digits_only},
-                                        {"$set": {
-                                            "futwork_lead_id": futwork_lead_id,
-                                            "updated_at": datetime.utcnow(),
-                                        }},
-                                    )
-                        except Exception as e:
-                            logger.error(f"Failed to push lead {phone} to Futwork: {e}")
+                        else:
                             failed += 1
 
                 logger.info(
-                    f"Futwork push: pushed={pushed}, failed={failed}, "
-                    f"campaign={settings.FUTWORK_CAMPAIGN_ID}"
+                    "Futwork push: pushed=%s, failed=%s, campaign=%s",
+                    pushed,
+                    failed,
+                    settings.FUTWORK_CAMPAIGN_ID,
                 )
                 futwork_status = "running" if pushed > 0 else "failed"
             except Exception as e:
-                logger.error(f"Failed to push to Futwork: {e}")
+                logger.error("Failed to push to Futwork: %s", e, exc_info=True)
                 futwork_status = "failed"
         else:
             logger.warning("Futwork credentials missing in .env. Campaign saved in DB only.")
@@ -285,7 +398,7 @@ class CampaignService:
         # 4. Save Campaign Record
         agent_name = AGENT_NAME_MAP.get(agent_id, agent_id)
         campaign = {
-            "id": str(uuid.uuid4()),
+            "id": campaign_uuid,
             "name": name,
             "agent_id": agent_id,
             "agent_name": agent_name,
@@ -300,6 +413,7 @@ class CampaignService:
             "pickupRate": 0.0,
             "dispositions": {
                 "interested": 0,
+                "semiInterested": 0,
                 "callback": 0,
                 "notInterested": 0,
                 "noAnswer": 0

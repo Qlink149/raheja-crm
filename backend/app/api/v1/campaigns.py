@@ -128,13 +128,13 @@ async def download_unprocessed_csv(upload_id: str, db=Depends(get_db)):
     )
 
 
-@router.get("/", response_model=List[Any])
+@router.get("", response_model=List[Any])
 async def list_campaigns(db=Depends(get_db)):
     service = CampaignService(db)
     return await service.get_campaigns()
 
 
-@router.post("/")
+@router.post("")
 async def create_campaign(payload: CampaignCreate, db=Depends(get_db)):
     service = CampaignService(db)
     try:
@@ -171,6 +171,24 @@ async def get_audience_count(
 
     count = await db.leads.count_documents(query)
     return {"count": count}
+
+
+@router.post("/{campaign_id}/retry-failed-leads")
+async def retry_failed_leads_endpoint(campaign_id: str, db=Depends(get_db)):
+    """Re-push leads with futwork_sync_status failed for this campaign."""
+    campaign = await db.campaigns.find_one({"id": campaign_id}, {"_id": 1})
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+
+    service = CampaignService(db)
+    try:
+        return await service.retry_failed_leads(campaign_id)
+    except Exception:
+        logger.exception(
+            "retry_failed_leads_endpoint failed | campaign_id=%s",
+            campaign_id,
+        )
+        raise HTTPException(status_code=500, detail="Failed to retry leads")
 
 
 @router.get("/{campaign_id}/calls")

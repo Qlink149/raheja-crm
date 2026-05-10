@@ -47,6 +47,9 @@ class LeadDetail(BaseModel):
     external_id: Optional[str] = ""
     futwork_lead_id: Optional[str] = ""
 
+    # Futwork CSV/campaign push lifecycle: pending | pushed | failed
+    futwork_sync_status: Optional[str] = "pending"
+
     # AI Summaries (GPT-4o generated + cached)
     aiPersonaSummary: Optional[str] = None
     strategicNextMove: Optional[str] = None

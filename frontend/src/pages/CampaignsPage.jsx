@@ -76,6 +76,26 @@ const CampaignsPage = ({ onLogout, currentUser }) => {
   const [uploadSectionOpen, setUploadSectionOpen] = useState(true);
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
+  const [failedSyncCount, setFailedSyncCount] = useState(0);
+  const [retryingFailed, setRetryingFailed] = useState(false);
+
+  const fetchFailedSyncCount = useCallback(async (campaignId) => {
+    if (!campaignId || !isBackendConfigured()) {
+      setFailedSyncCount(0);
+      return;
+    }
+    try {
+      const res = await api.get("/leads/count/all", {
+        params: {
+          campaign_id: campaignId,
+          futwork_sync_status: "failed",
+        },
+      });
+      setFailedSyncCount(Number(res.data?.count ?? 0));
+    } catch {
+      setFailedSyncCount(0);
+    }
+  }, []);
 
   const fetchUploadHistory = useCallback(async () => {
     const res = await api.get("/campaigns/current/upload-history");
@@ -87,6 +107,7 @@ const CampaignsPage = ({ onLogout, currentUser }) => {
     const res = await api.get("/campaigns/current", q);
     setCampaign(res.data);
     setLastUpdatedAt(new Date());
+    return res.data;
   }, []);
 
   const loadAll = useCallback(
@@ -103,7 +124,8 @@ const CampaignsPage = ({ onLogout, currentUser }) => {
       if (liveOnly) {
         setRefreshingLive(true);
         try {
-          await fetchCampaign(refreshStats);
+          const data = await fetchCampaign(refreshStats);
+          await fetchFailedSyncCount(data?.id);
         } finally {
           setRefreshingLive(false);
         }
@@ -112,7 +134,11 @@ const CampaignsPage = ({ onLogout, currentUser }) => {
       setLoading(true);
       setError(null);
       try {
-        await Promise.all([fetchCampaign(refreshStats), fetchUploadHistory()]);
+        const data = await fetchCampaign(refreshStats);
+        await Promise.all([
+          fetchUploadHistory(),
+          fetchFailedSyncCount(data?.id),
+        ]);
       } catch (e) {
         const msg =
           e?.response?.data?.detail ||
@@ -124,8 +150,16 @@ const CampaignsPage = ({ onLogout, currentUser }) => {
         setLoading(false);
       }
     },
-    [fetchCampaign, fetchUploadHistory]
+    [fetchCampaign, fetchUploadHistory, fetchFailedSyncCount]
   );
+
+  useEffect(() => {
+    if (campaign?.id) {
+      fetchFailedSyncCount(campaign.id);
+    } else {
+      setFailedSyncCount(0);
+    }
+  }, [campaign?.id, fetchFailedSyncCount]);
 
   useEffect(() => {
     if (!isBackendConfigured()) {
@@ -143,7 +177,11 @@ const CampaignsPage = ({ onLogout, currentUser }) => {
     setRefreshingMain(true);
     setError(null);
     try {
-      await Promise.all([fetchCampaign(false), fetchUploadHistory()]);
+      const data = await fetchCampaign(false);
+      await Promise.all([
+        fetchUploadHistory(),
+        fetchFailedSyncCount(data?.id),
+      ]);
       setLastUpdatedAt(new Date());
       toast.success("Refreshed");
     } catch (e) {
@@ -162,6 +200,31 @@ const CampaignsPage = ({ onLogout, currentUser }) => {
     } catch (e) {
       const msg = e?.response?.data?.detail || e?.message || "Refresh failed";
       toast.error(typeof msg === "string" ? msg : "Refresh failed");
+    }
+  };
+
+  const handleRetryFailedLeads = async () => {
+    if (!campaign?.id) return;
+    setRetryingFailed(true);
+    try {
+      const res = await api.post(
+        `/campaigns/${encodeURIComponent(campaign.id)}/retry-failed-leads`
+      );
+      const d = res.data || {};
+      toast.success(
+        `Retry complete: ${d.succeeded ?? 0} succeeded, ${d.still_failed ?? 0} still failed`
+      );
+      const data = await fetchCampaign(false);
+      await Promise.all([
+        fetchFailedSyncCount(data?.id),
+        fetchUploadHistory(),
+      ]);
+      setLastUpdatedAt(new Date());
+    } catch (e) {
+      const msg = e?.response?.data?.detail || e?.message || "Retry failed";
+      toast.error(typeof msg === "string" ? msg : "Retry failed");
+    } finally {
+      setRetryingFailed(false);
     }
   };
 
@@ -200,7 +263,11 @@ const CampaignsPage = ({ onLogout, currentUser }) => {
       toast.success(
         parts.length ? `Upload complete: ${parts.join(", ")}` : "Upload complete"
       );
-      await Promise.all([fetchCampaign(false), fetchUploadHistory()]);
+      const data = await fetchCampaign(false);
+      await Promise.all([
+        fetchUploadHistory(),
+        fetchFailedSyncCount(data?.id),
+      ]);
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Failed to upload CSV");
       throw e;
@@ -319,6 +386,22 @@ const CampaignsPage = ({ onLogout, currentUser }) => {
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
+              {failedSyncCount > 0 && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="border-amber-500/30 text-amber-300 hover:bg-amber-900/20"
+                  onClick={handleRetryFailedLeads}
+                  disabled={retryingFailed}
+                >
+                  {retryingFailed ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                  )}
+                  Retry Failed Leads
+                </Button>
+              )}
               <Button
                 variant="outline"
                 className="border-white/10 text-white hover:bg-white/5"

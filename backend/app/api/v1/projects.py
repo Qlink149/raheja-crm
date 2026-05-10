@@ -4,7 +4,7 @@ from ...core.database import get_db
 
 router = APIRouter()
 
-@router.get("/")
+@router.get("")
 async def get_projects(db = Depends(get_db)):
     pipeline = [
         {"$group": {"_id": "$project", "count": {"$sum": 1}}},

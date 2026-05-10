@@ -19,6 +19,7 @@ import {
   AlertCircle,
   PhoneOff,
   PhoneMissed,
+  Sparkles,
 } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -44,6 +45,7 @@ const AICallingPage = ({ onLogout, currentUser }) => {
   const [calls, setCalls] = useState([]);
   const [campaigns, setCampaigns] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [currentCampaign, setCurrentCampaign] = useState(null);
   const [selectedCampaign, setSelectedCampaign] = useState("all");
   const [selectedCall, setSelectedCall] = useState(null);
   const [showCallDetail, setShowCallDetail] = useState(false);
@@ -69,9 +71,24 @@ const AICallingPage = ({ onLogout, currentUser }) => {
   const fetchCallHistory = async () => {
     setLoading(true);
     try {
-      const response = await api.get("/call-history");
-      setCalls(response.data.calls || []);
-      setCampaigns(response.data.campaigns || []);
+      const [callsResult, campaignResult] = await Promise.allSettled([
+        api.get("/call-history"),
+        api.get("/campaigns/current"),
+      ]);
+      if (callsResult.status === "fulfilled") {
+        setCalls(callsResult.value.data.calls || []);
+        setCampaigns(callsResult.value.data.campaigns || []);
+      } else {
+        console.error("Error fetching call history:", callsResult.reason);
+        toast.error("Failed to load call history");
+        setCalls([]);
+        setCampaigns([]);
+      }
+      if (campaignResult.status === "fulfilled") {
+        setCurrentCampaign(campaignResult.value.data);
+      } else {
+        setCurrentCampaign(null);
+      }
     } catch (error) {
       console.error("Error fetching call history:", error);
       toast.error("Failed to load call history");
@@ -105,6 +122,7 @@ const AICallingPage = ({ onLogout, currentUser }) => {
   const getDispositionBadge = (disposition) => {
     const styles = {
       "Interested": "bg-emerald-900/30 text-emerald-300 border-emerald-500/30",
+      "Semi-Interested": "bg-cyan-900/30 text-cyan-300 border-cyan-500/30",
       "Not Interested": "bg-red-900/30 text-red-300 border-red-500/30",
       "Busy": "bg-yellow-900/30 text-yellow-300 border-yellow-500/30",
       "Dropped": "bg-orange-900/30 text-orange-300 border-orange-500/30",
@@ -234,6 +252,8 @@ const AICallingPage = ({ onLogout, currentUser }) => {
   const totalCalls = filteredCalls.length;
   const completedCalls = filteredCalls.filter(c => normText(c.status) === 'completed').length;
   const interestedCalls = filteredCalls.filter(c => normText(c.disposition) === 'interested').length;
+  const semiInterestedCount =
+    Number(currentCampaign?.dispositions?.semiInterested ?? 0) || 0;
   const avgDuration = filteredCalls.length > 0
     ? Math.round(filteredCalls.reduce((sum, c) => sum + (c.duration || 0), 0) / filteredCalls.length)
     : 0;
@@ -258,7 +278,7 @@ const AICallingPage = ({ onLogout, currentUser }) => {
         </motion.div>
 
         {/* Stats Cards */}
-        <div className="grid grid-cols-4 gap-4 mb-8">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-8">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -307,6 +327,23 @@ const AICallingPage = ({ onLogout, currentUser }) => {
               </span>
             </div>
             <p className="text-3xl font-serif text-white">{interestedCalls}</p>
+          </motion.div>
+
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.25 }}
+            className="glass-card rounded-xl p-6"
+          >
+            <div className="flex items-center gap-3 mb-3">
+              <div className="p-3 bg-cyan-900/30 rounded-lg flex-shrink-0">
+                <Sparkles className="w-5 h-5 text-cyan-400" />
+              </div>
+              <span className="text-xs uppercase tracking-widest text-cyan-400 whitespace-nowrap">
+                Semi-Interested
+              </span>
+            </div>
+            <p className="text-3xl font-serif text-white">{semiInterestedCount}</p>
           </motion.div>
 
           <motion.div
@@ -374,6 +411,7 @@ const AICallingPage = ({ onLogout, currentUser }) => {
               <SelectContent className="bg-[#1A1A1A] border-white/10">
                 <SelectItem value="all">All Dispositions</SelectItem>
                 <SelectItem value="Interested">Interested</SelectItem>
+                <SelectItem value="Semi-Interested">Semi-Interested</SelectItem>
                 <SelectItem value="Not Interested">Not Interested</SelectItem>
                 <SelectItem value="Busy">Busy</SelectItem>
                 <SelectItem value="Dropped">Dropped</SelectItem>

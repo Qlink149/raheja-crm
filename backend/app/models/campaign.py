@@ -25,6 +25,7 @@ class Campaign(BaseModel):
     pickup_rate: float = 0.0
     dispositions: Dict[str, int] = {
         "interested": 0,
+        "semiInterested": 0,
         "callback": 0,
         "notInterested": 0,
         "noAnswer": 0

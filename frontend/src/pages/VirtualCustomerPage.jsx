@@ -22,11 +22,41 @@ import {
 } from "lucide-react";
 import { Input } from "../components/ui/input";
 import { Button } from "../components/ui/button";
+import { Badge } from "../components/ui/badge";
 import { ScrollArea } from "../components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "../components/ui/dialog";
 import Sidebar from "../components/Sidebar";
 import { api } from "../lib/api";
+
+function FutworkSyncBadge({ status }) {
+  const s = (status || "pending").toLowerCase();
+  if (s === "pushed") {
+    return (
+      <Badge
+        variant="outline"
+        className="border-emerald-500/30 bg-emerald-900/30 text-emerald-300 shrink-0"
+      >
+        Pushed to AI
+      </Badge>
+    );
+  }
+  if (s === "failed") {
+    return (
+      <Badge variant="destructive" className="shrink-0">
+        Sync Failed
+      </Badge>
+    );
+  }
+  return (
+    <Badge
+      variant="outline"
+      className="border-amber-500/30 bg-amber-900/30 text-amber-300 shrink-0"
+    >
+      Pending
+    </Badge>
+  );
+}
 
 const VirtualCustomerPage = ({ onLogout, currentUser }) => {
   const navigate = useNavigate();
@@ -587,6 +617,7 @@ const VirtualCustomerPage = ({ onLogout, currentUser }) => {
                               {getTemperatureIcon(lead.temperature)}
                               {lead.temperature}
                             </span>
+                            <FutworkSyncBadge status={lead.futwork_sync_status} />
                             <span className="text-[#525252] text-xs whitespace-nowrap">
                               {lead.budget !== "0" && lead.budget
                                 ? `${lead.budget} Cr`

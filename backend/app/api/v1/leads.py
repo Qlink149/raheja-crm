@@ -8,6 +8,7 @@ from datetime import datetime
 from ...core.config import settings
 from ...core.database import get_db
 from ...services.lead_service import LeadService
+from ...services.campaign_service import CampaignService
 from ...models.lead import LeadDetail
 
 logger = logging.getLogger(__name__)
@@ -15,7 +16,7 @@ router = APIRouter()
 
 _FAILURE_INSERT_CHUNK = 1000
 
-@router.get("/", response_model=List[LeadDetail])
+@router.get("", response_model=List[LeadDetail])
 async def list_leads(
     skip: int = 0,
     limit: int = 50,
@@ -26,6 +27,8 @@ async def list_leads(
     temperature: Optional[str] = None,
     project: Optional[str] = None,
     vip_only: bool = False,
+    campaign_id: Optional[str] = None,
+    futwork_sync_status: Optional[str] = None,
     db = Depends(get_db)
 ):
     service = LeadService(db)
@@ -38,6 +41,10 @@ async def list_leads(
     }
     if vip_only:
         filters["is_vip"] = True
+    if campaign_id:
+        filters["campaign_id"] = campaign_id
+    if futwork_sync_status:
+        filters["futwork_sync_status"] = futwork_sync_status
 
     return await service.get_leads(skip, limit, search, filters)
 
@@ -51,6 +58,8 @@ async def get_leads_count(
     project: Optional[str] = None,
     vip_only: bool = False,
     search: Optional[str] = None,
+    campaign_id: Optional[str] = None,
+    futwork_sync_status: Optional[str] = None,
     db = Depends(get_db)
 ):
     import re
@@ -61,6 +70,10 @@ async def get_leads_count(
     if temperature and temperature != "all": query["temperature"] = temperature
     if project and project != "all": query["project"] = project
     if vip_only: query["is_vip"] = True
+    if campaign_id:
+        query["campaign_id"] = campaign_id
+    if futwork_sync_status:
+        query["futwork_sync_status"] = futwork_sync_status
 
     if search:
         esc = re.escape(search)
@@ -262,7 +275,20 @@ async def upload_leads(
     if push_to_futwork:
         from ...utils.csv_processor import process_row_to_lead
         processed_leads = [process_row_to_lead(row) for row in rows]
-        pushed = await service.push_to_futwork(processed_leads)
+        upload_campaign_id = None
+        try:
+            cs = CampaignService(db)
+            doc = await cs.find_campaign_by_futwork_settings()
+            if doc and doc.get("id"):
+                upload_campaign_id = str(doc["id"])
+        except Exception:
+            logger.exception(
+                "upload_leads: failed to resolve campaign for Futwork tagging",
+            )
+        pushed = await service.push_to_futwork(
+            processed_leads,
+            campaign_id=upload_campaign_id,
+        )
         result["futwork_pushed"] = pushed
 
     return {
