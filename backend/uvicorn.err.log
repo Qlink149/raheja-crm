@@ -1,0 +1,82 @@
+2026-05-08 16:53:20,246 - server - INFO - MongoDB connection configured for database: rustomjee_db
+INFO:     Started server process [15656]
+INFO:     Waiting for application startup.
+2026-05-08 16:53:25,610 - server - WARNING - Index creation warning (non-fatal): SSL handshake failed: ac-y6bkian-shard-00-01.khikab5.mongodb.net:27017: [SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error (_ssl.c:1010),SSL handshake failed: ac-y6bkian-shard-00-02.khikab5.mongodb.net:27017: [SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error (_ssl.c:1010),SSL handshake failed: ac-y6bkian-shard-00-00.khikab5.mongodb.net:27017: [SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error (_ssl.c:1010), Timeout: 5.0s, Topology Description: <TopologyDescription id: 69fdc7a82236a8b29f8b51e5, topology_type: ReplicaSetNoPrimary, servers: [<ServerDescription ('ac-y6bkian-shard-00-00.khikab5.mongodb.net', 27017) server_type: Unknown, rtt: None, error=AutoReconnect('SSL handshake failed: ac-y6bkian-shard-00-00.khikab5.mongodb.net:27017: [SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error (_ssl.c:1010)')>, <ServerDescription ('ac-y6bkian-shard-00-01.khikab5.mongodb.net', 27017) server_type: Unknown, rtt: None, error=AutoReconnect('SSL handshake failed: ac-y6bkian-shard-00-01.khikab5.mongodb.net:27017: [SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error (_ssl.c:1010)')>, <ServerDescription ('ac-y6bkian-shard-00-02.khikab5.mongodb.net', 27017) server_type: Unknown, rtt: None, error=AutoReconnect('SSL handshake failed: ac-y6bkian-shard-00-02.khikab5.mongodb.net:27017: [SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error (_ssl.c:1010)')>]>
+2026-05-08 16:53:30,623 - server - WARNING - mobile_digits backfill skipped: SSL handshake failed: ac-y6bkian-shard-00-01.khikab5.mongodb.net:27017: [SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error (_ssl.c:1010),SSL handshake failed: ac-y6bkian-shard-00-02.khikab5.mongodb.net:27017: [SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error (_ssl.c:1010),SSL handshake failed: ac-y6bkian-shard-00-00.khikab5.mongodb.net:27017: [SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error (_ssl.c:1010), Timeout: 5.0s, Topology Description: <TopologyDescription id: 69fdc7a82236a8b29f8b51e5, topology_type: ReplicaSetNoPrimary, servers: [<ServerDescription ('ac-y6bkian-shard-00-00.khikab5.mongodb.net', 27017) server_type: Unknown, rtt: None, error=AutoReconnect('SSL handshake failed: ac-y6bkian-shard-00-00.khikab5.mongodb.net:27017: [SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error (_ssl.c:1010)')>, <ServerDescription ('ac-y6bkian-shard-00-01.khikab5.mongodb.net', 27017) server_type: Unknown, rtt: None, error=AutoReconnect('SSL handshake failed: ac-y6bkian-shard-00-01.khikab5.mongodb.net:27017: [SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error (_ssl.c:1010)')>, <ServerDescription ('ac-y6bkian-shard-00-02.khikab5.mongodb.net', 27017) server_type: Unknown, rtt: None, error=AutoReconnect('SSL handshake failed: ac-y6bkian-shard-00-02.khikab5.mongodb.net:27017: [SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error (_ssl.c:1010)')>]>
+2026-05-08 16:53:35,636 - server - ERROR - Error initializing database: SSL handshake failed: ac-y6bkian-shard-00-01.khikab5.mongodb.net:27017: [SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error (_ssl.c:1010),SSL handshake failed: ac-y6bkian-shard-00-02.khikab5.mongodb.net:27017: [SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error (_ssl.c:1010),SSL handshake failed: ac-y6bkian-shard-00-00.khikab5.mongodb.net:27017: [SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error (_ssl.c:1010), Timeout: 5.0s, Topology Description: <TopologyDescription id: 69fdc7a82236a8b29f8b51e5, topology_type: ReplicaSetNoPrimary, servers: [<ServerDescription ('ac-y6bkian-shard-00-00.khikab5.mongodb.net', 27017) server_type: Unknown, rtt: None, error=AutoReconnect('SSL handshake failed: ac-y6bkian-shard-00-00.khikab5.mongodb.net:27017: [SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error (_ssl.c:1010)')>, <ServerDescription ('ac-y6bkian-shard-00-01.khikab5.mongodb.net', 27017) server_type: Unknown, rtt: None, error=AutoReconnect('SSL handshake failed: ac-y6bkian-shard-00-01.khikab5.mongodb.net:27017: [SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error (_ssl.c:1010)')>, <ServerDescription ('ac-y6bkian-shard-00-02.khikab5.mongodb.net', 27017) server_type: Unknown, rtt: None, error=AutoReconnect('SSL handshake failed: ac-y6bkian-shard-00-02.khikab5.mongodb.net:27017: [SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error (_ssl.c:1010)')>]>
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8001 (Press CTRL+C to quit)
+2026-05-08 16:53:55,567 - server - ERROR - Health check failed: SSL handshake failed: ac-y6bkian-shard-00-01.khikab5.mongodb.net:27017: [SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error (_ssl.c:1010),SSL handshake failed: ac-y6bkian-shard-00-02.khikab5.mongodb.net:27017: [SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error (_ssl.c:1010),SSL handshake failed: ac-y6bkian-shard-00-00.khikab5.mongodb.net:27017: [SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error (_ssl.c:1010), Timeout: 5.0s, Topology Description: <TopologyDescription id: 69fdc7a82236a8b29f8b51e5, topology_type: ReplicaSetNoPrimary, servers: [<ServerDescription ('ac-y6bkian-shard-00-00.khikab5.mongodb.net', 27017) server_type: Unknown, rtt: None, error=AutoReconnect('SSL handshake failed: ac-y6bkian-shard-00-00.khikab5.mongodb.net:27017: [SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error (_ssl.c:1010)')>, <ServerDescription ('ac-y6bkian-shard-00-01.khikab5.mongodb.net', 27017) server_type: Unknown, rtt: None, error=AutoReconnect('SSL handshake failed: ac-y6bkian-shard-00-01.khikab5.mongodb.net:27017: [SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error (_ssl.c:1010)')>, <ServerDescription ('ac-y6bkian-shard-00-02.khikab5.mongodb.net', 27017) server_type: Unknown, rtt: None, error=AutoReconnect('SSL handshake failed: ac-y6bkian-shard-00-02.khikab5.mongodb.net:27017: [SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error (_ssl.c:1010)')>]>
+ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "C:\Users\Admin\Desktop\clara\Rustomjee_Dash-main\backend\.venv\Lib\site-packages\uvicorn\protocols\http\h11_impl.py", line 408, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Admin\Desktop\clara\Rustomjee_Dash-main\backend\.venv\Lib\site-packages\uvicorn\middleware\proxy_headers.py", line 84, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Admin\Desktop\clara\Rustomjee_Dash-main\backend\.venv\Lib\site-packages\fastapi\applications.py", line 1054, in __call__
+    await super().__call__(scope, receive, send)
+  File "C:\Users\Admin\Desktop\clara\Rustomjee_Dash-main\backend\.venv\Lib\site-packages\starlette\applications.py", line 123, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "C:\Users\Admin\Desktop\clara\Rustomjee_Dash-main\backend\.venv\Lib\site-packages\starlette\middleware\errors.py", line 186, in __call__
+    raise exc
+  File "C:\Users\Admin\Desktop\clara\Rustomjee_Dash-main\backend\.venv\Lib\site-packages\starlette\middleware\errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "C:\Users\Admin\Desktop\clara\Rustomjee_Dash-main\backend\.venv\Lib\site-packages\starlette\middleware\cors.py", line 85, in __call__
+    await self.app(scope, receive, send)
+  File "C:\Users\Admin\Desktop\clara\Rustomjee_Dash-main\backend\.venv\Lib\site-packages\starlette\middleware\exceptions.py", line 65, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "C:\Users\Admin\Desktop\clara\Rustomjee_Dash-main\backend\.venv\Lib\site-packages\starlette\_exception_handler.py", line 64, in wrapped_app
+    raise exc
+  File "C:\Users\Admin\Desktop\clara\Rustomjee_Dash-main\backend\.venv\Lib\site-packages\starlette\_exception_handler.py", line 53, in wrapped_app
+    await app(scope, receive, sender)
+  File "C:\Users\Admin\Desktop\clara\Rustomjee_Dash-main\backend\.venv\Lib\site-packages\starlette\routing.py", line 756, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "C:\Users\Admin\Desktop\clara\Rustomjee_Dash-main\backend\.venv\Lib\site-packages\starlette\routing.py", line 776, in app
+    await route.handle(scope, receive, send)
+  File "C:\Users\Admin\Desktop\clara\Rustomjee_Dash-main\backend\.venv\Lib\site-packages\starlette\routing.py", line 297, in handle
+    await self.app(scope, receive, send)
+  File "C:\Users\Admin\Desktop\clara\Rustomjee_Dash-main\backend\.venv\Lib\site-packages\starlette\routing.py", line 77, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "C:\Users\Admin\Desktop\clara\Rustomjee_Dash-main\backend\.venv\Lib\site-packages\starlette\_exception_handler.py", line 64, in wrapped_app
+    raise exc
+  File "C:\Users\Admin\Desktop\clara\Rustomjee_Dash-main\backend\.venv\Lib\site-packages\starlette\_exception_handler.py", line 53, in wrapped_app
+    await app(scope, receive, sender)
+  File "C:\Users\Admin\Desktop\clara\Rustomjee_Dash-main\backend\.venv\Lib\site-packages\starlette\routing.py", line 72, in app
+    response = await func(request)
+               ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Admin\Desktop\clara\Rustomjee_Dash-main\backend\.venv\Lib\site-packages\fastapi\routing.py", line 278, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Admin\Desktop\clara\Rustomjee_Dash-main\backend\.venv\Lib\site-packages\fastapi\routing.py", line 191, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Admin\Desktop\clara\Rustomjee_Dash-main\backend\server.py", line 916, in get_lead_calls
+    lead = await db.leads.find_one({'lead_id': lead_id}, {"_id": 0})
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\tmp\Python312\Lib\concurrent\futures\thread.py", line 59, in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Admin\Desktop\clara\Rustomjee_Dash-main\backend\.venv\Lib\site-packages\pymongo\collection.py", line 1508, in find_one
+    for result in cursor.limit(-1):
+                  ^^^^^^^^^^^^^^^^
+  File "C:\Users\Admin\Desktop\clara\Rustomjee_Dash-main\backend\.venv\Lib\site-packages\pymongo\cursor.py", line 1262, in next
+    if len(self.__data) or self._refresh():
+                           ^^^^^^^^^^^^^^^
+  File "C:\Users\Admin\Desktop\clara\Rustomjee_Dash-main\backend\.venv\Lib\site-packages\pymongo\cursor.py", line 1153, in _refresh
+    self.__session = self.__collection.database.client._ensure_session()
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Admin\Desktop\clara\Rustomjee_Dash-main\backend\.venv\Lib\site-packages\pymongo\mongo_client.py", line 1868, in _ensure_session
+    return self.__start_session(True, causal_consistency=False)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Admin\Desktop\clara\Rustomjee_Dash-main\backend\.venv\Lib\site-packages\pymongo\mongo_client.py", line 1811, in __start_session
+    self._topology._check_implicit_session_support()
+  File "C:\Users\Admin\Desktop\clara\Rustomjee_Dash-main\backend\.venv\Lib\site-packages\pymongo\topology.py", line 583, in _check_implicit_session_support
+    self._check_session_support()
+  File "C:\Users\Admin\Desktop\clara\Rustomjee_Dash-main\backend\.venv\Lib\site-packages\pymongo\topology.py", line 599, in _check_session_support
+    self._select_servers_loop(
+  File "C:\Users\Admin\Desktop\clara\Rustomjee_Dash-main\backend\.venv\Lib\site-packages\pymongo\topology.py", line 269, in _select_servers_loop
+    raise ServerSelectionTimeoutError(
+pymongo.errors.ServerSelectionTimeoutError: SSL handshake failed: ac-y6bkian-shard-00-01.khikab5.mongodb.net:27017: [SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error (_ssl.c:1010),SSL handshake failed: ac-y6bkian-shard-00-02.khikab5.mongodb.net:27017: [SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error (_ssl.c:1010),SSL handshake failed: ac-y6bkian-shard-00-00.khikab5.mongodb.net:27017: [SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error (_ssl.c:1010), Timeout: 5.0s, Topology Description: <TopologyDescription id: 69fdc7a82236a8b29f8b51e5, topology_type: ReplicaSetNoPrimary, servers: [<ServerDescription ('ac-y6bkian-shard-00-00.khikab5.mongodb.net', 27017) server_type: Unknown, rtt: None, error=AutoReconnect('SSL handshake failed: ac-y6bkian-shard-00-00.khikab5.mongodb.net:27017: [SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error (_ssl.c:1010)')>, <ServerDescription ('ac-y6bkian-shard-00-01.khikab5.mongodb.net', 27017) server_type: Unknown, rtt: None, error=AutoReconnect('SSL handshake failed: ac-y6bkian-shard-00-01.khikab5.mongodb.net:27017: [SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error (_ssl.c:1010)')>, <ServerDescription ('ac-y6bkian-shard-00-02.khikab5.mongodb.net', 27017) server_type: Unknown, rtt: None, error=AutoReconnect('SSL handshake failed: ac-y6bkian-shard-00-02.khikab5.mongodb.net:27017: [SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error (_ssl.c:1010)')>]>
+2026-05-08 16:59:38,983 - server - ERROR - Health check failed: SSL handshake failed: ac-y6bkian-shard-00-01.khikab5.mongodb.net:27017: [SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error (_ssl.c:1010),SSL handshake failed: ac-y6bkian-shard-00-02.khikab5.mongodb.net:27017: [SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error (_ssl.c:1010),SSL handshake failed: ac-y6bkian-shard-00-00.khikab5.mongodb.net:27017: [SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error (_ssl.c:1010), Timeout: 5.0s, Topology Description: <TopologyDescription id: 69fdc7a82236a8b29f8b51e5, topology_type: ReplicaSetNoPrimary, servers: [<ServerDescription ('ac-y6bkian-shard-00-00.khikab5.mongodb.net', 27017) server_type: Unknown, rtt: None, error=AutoReconnect('SSL handshake failed: ac-y6bkian-shard-00-00.khikab5.mongodb.net:27017: [SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error (_ssl.c:1010)')>, <ServerDescription ('ac-y6bkian-shard-00-01.khikab5.mongodb.net', 27017) server_type: Unknown, rtt: None, error=AutoReconnect('SSL handshake failed: ac-y6bkian-shard-00-01.khikab5.mongodb.net:27017: [SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error (_ssl.c:1010)')>, <ServerDescription ('ac-y6bkian-shard-00-02.khikab5.mongodb.net', 27017) server_type: Unknown, rtt: None, error=AutoReconnect('SSL handshake failed: ac-y6bkian-shard-00-02.khikab5.mongodb.net:27017: [SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error (_ssl.c:1010)')>]>

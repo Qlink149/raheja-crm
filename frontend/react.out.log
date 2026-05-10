@@ -1,0 +1,38 @@
+yarn run v1.22.22
+$ craco start
+Starting the development server...
+
+Compiled with warnings.
+
+[eslint] 
+src\pages\CampaignsPage.jsx
+  Line 177:6:  React Hook useEffect has a missing dependency: 'fetchAudienceCount'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src\pages\CustomerDetailPage.jsx
+  Line 49:6:  React Hook useEffect has a missing dependency: 'fetchLeadDetail'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src\pages\DashboardPage.jsx
+  Line 63:6:  React Hook useEffect has a missing dependency: 'fetchStats'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src\pages\VirtualCustomerPage.jsx
+  Line 63:6:  React Hook useEffect has a missing dependency: 'fetchLeads'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+Search for the keywords to learn more about each warning.
+To ignore, add // eslint-disable-next-line to the line before.
+
+[1m[33mWARNING[39m[22m in [1m[eslint] 
+src\pages\CampaignsPage.jsx
+  Line 177:6:  React Hook useEffect has a missing dependency: 'fetchAudienceCount'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src\pages\CustomerDetailPage.jsx
+  Line 49:6:  React Hook useEffect has a missing dependency: 'fetchLeadDetail'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src\pages\DashboardPage.jsx
+  Line 63:6:  React Hook useEffect has a missing dependency: 'fetchStats'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src\pages\VirtualCustomerPage.jsx
+  Line 63:6:  React Hook useEffect has a missing dependency: 'fetchLeads'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+[39m[22m
+
+webpack compiled with [1m[33m1 warning[39m[22m
