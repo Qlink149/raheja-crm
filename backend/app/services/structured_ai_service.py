@@ -55,7 +55,10 @@ def worthy_call_gate(status_raw: str, transcript: str) -> Tuple[bool, List[str]]
     t = (transcript or "").strip()
     if len(t) < 50:
         reasons.append("transcript_lt_50")
-    if not re.search(r"(?im)^\s*User\s*:", t):
+    if not re.search(
+        r"(?im)^\s*(?:User|Customer|ग्राहक|यूज़र|उपयोगकर्ता)\s*:",
+        t,
+    ):
         reasons.append("no_user_turn")
     return (len(reasons) == 0, reasons)
 
@@ -192,6 +195,17 @@ def _normalize_intent_category_ai(raw: str) -> str:
     return get_intent_category(raw)
 
 
+def _budget_band_mid_cr(bc: str) -> str:
+    """Representative Cr value for DNA display when only the bucket is known."""
+    m = {
+        "<1 Cr": "0.5",
+        "1-2 Cr": "1.5",
+        "2-5 Cr": "3.5",
+        "5 Cr+": "6",
+    }
+    return m.get((bc or "").strip(), "")
+
+
 class StructuredAIService:
     def __init__(self, db: AsyncIOMotorDatabase):
         self.db = db
@@ -217,6 +231,8 @@ class StructuredAIService:
             "- disposition (string): exactly one of: Hot Lead | Semi-Interested | Mildly interested | "
             "Not Interested | Voicemail | Wrong Number | Already Bought\n"
             "- call_summary (string): 3-5 concise actionable sentences.\n"
+            "- preferred_location (string): neighborhood or area the customer stated, else empty string.\n"
+            "- unit_configuration (string): BHK / unit type (e.g. 2 BHK) if stated, else empty string.\n"
             "Also include schema_version: 2, lead_name, phone (masked like ******1234), system_tag_correct (boolean), "
             "key_signals (array of short strings).\n"
             "If information is missing, use false and Profiling in Progress / Other as appropriate. "
@@ -307,6 +323,25 @@ class StructuredAIService:
         }
         if dispo:
             patch["disposition"] = dispo
+
+        pl = (extraction.preferred_location or "").strip()
+        uc = (extraction.unit_configuration or "").strip()
+        if pl:
+            patch["location"] = pl
+            patch["current_residence_location"] = pl
+            patch["current_residential_location"] = pl
+        elif lc and lc not in ("Other", "Profiling in Progress"):
+            patch["location"] = lc
+            patch["current_residence_location"] = lc
+            patch["current_residential_location"] = lc
+        if uc:
+            patch["configuration"] = uc
+            patch["bhk"] = uc
+
+        mid_cr = _budget_band_mid_cr(bc)
+        if mid_cr:
+            patch["budget"] = mid_cr
+
         return patch
 
     @staticmethod

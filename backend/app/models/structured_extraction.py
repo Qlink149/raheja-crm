@@ -53,6 +53,9 @@ class UnifiedStructuredExtraction(BaseModel):
     phone: str = Field(default="")
     system_tag_correct: bool = Field(default=True)
     key_signals: List[str] = Field(default_factory=list)
+    # Free-text from transcript for CRM header / configuration (schema v2+)
+    preferred_location: str = Field(default="", description="Stated area or neighborhood if any")
+    unit_configuration: str = Field(default="", description="BHK or unit type e.g. 2 BHK")
 
     @field_validator("disposition", mode="before")
     @classmethod

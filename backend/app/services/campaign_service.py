@@ -38,15 +38,44 @@ def resolve_agent_name(agent_id: str) -> str:
         return f"Clara Agent ({agent_id[:6]}…{agent_id[-4:]})"
     return agent_id
 
+
+WHITELABEL_AGENT_DISPLAY_NAME = "Rustomjee AI Sales Agent"
+
+
+def mask_futwork_agent_branding(name: Optional[str]) -> str:
+    """Replace vendor-branded agent labels in API responses."""
+    if name is None:
+        return ""
+    s = str(name).strip()
+    if not s:
+        return ""
+    if "futwork" in s.lower():
+        return WHITELABEL_AGENT_DISPLAY_NAME
+    return s
+
+
 class CampaignService:
     def __init__(self, db: AsyncIOMotorDatabase):
         self.db = db
+
+    @staticmethod
+    def sanitize_campaign_for_response(doc: Optional[Dict[str, Any]]) -> None:
+        """Mutate campaign dict so outbound JSON never exposes Futwork-branded agent names."""
+        if not doc:
+            return
+        for key in ("agent_name", "agent"):
+            if key not in doc:
+                continue
+            val = doc.get(key)
+            if isinstance(val, str):
+                doc[key] = mask_futwork_agent_branding(val)
 
     async def get_campaigns(self) -> List[Dict[str, Any]]:
         docs = await self.db.campaigns.find().sort("created_at", -1).to_list(length=100)
         # Remove MongoDB _id so serialization doesn't fail
         for doc in docs:
             doc.pop("_id", None)
+            self.sanitize_campaign_for_response(doc)
         return docs
 
     async def find_campaign_by_futwork_settings(self) -> Optional[Dict[str, Any]]:
@@ -159,6 +188,7 @@ class CampaignService:
             or resolve_agent_name(agent_id)
             or ""
         )
+        agent_name = mask_futwork_agent_branding(agent_name)
 
         return CampaignCurrentResponse(
             id=doc.get("id", ""),
@@ -396,7 +426,7 @@ class CampaignService:
             logger.warning("Futwork credentials missing in .env. Campaign saved in DB only.")
 
         # 4. Save Campaign Record
-        agent_name = AGENT_NAME_MAP.get(agent_id, agent_id)
+        agent_name = mask_futwork_agent_branding(AGENT_NAME_MAP.get(agent_id, agent_id))
         campaign = {
             "id": campaign_uuid,
             "name": name,

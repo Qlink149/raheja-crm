@@ -367,4 +367,5 @@ async def get_campaign_calls(campaign_id: str, db=Depends(get_db)):
             for l in leads_with_calls
         ]
 
+    CampaignService.sanitize_campaign_for_response(campaign)
     return {"calls": calls, "campaign": campaign}

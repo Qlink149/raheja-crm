@@ -107,7 +107,8 @@ const DashboardPage = ({ onLogout, currentUser }) => {
   // Prepare chart data
   const mapLeadSourceLabel = (raw) => {
     const s = String(raw || "");
-    if (s === "Futwork CSV Import" || s.includes("Futwork")) return "Platform Pipeline";
+    // Exact legacy `source` from Sales Intelligence / dialer CSV ingest (stored in DB).
+    if (s === "Futwork CSV Import") return "Platform Pipeline";
     return s || "Other";
   };
 

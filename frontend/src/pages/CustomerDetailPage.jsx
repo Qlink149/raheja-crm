@@ -377,8 +377,29 @@ const CustomerDetailPage = ({ onLogout, currentUser }) => {
                     </div>
                     <div className="min-w-0">
                       <p className="text-xs text-[#525252]">Location</p>
-                      <p className="text-sm text-white truncate" title={displayValue(lead.current_residential_location || lead.current_residence_location)}>
-                        {displayValue(lead.current_residential_location || lead.current_residence_location)}
+                      <p
+                        className="text-sm text-white truncate"
+                        title={displayValue(
+                          lead.current_residential_location ||
+                            lead.current_residence_location ||
+                            lead.location ||
+                            (lead.location_category &&
+                            lead.location_category !== "Other" &&
+                            lead.location_category !== "Profiling in Progress"
+                              ? lead.location_category
+                              : "")
+                        )}
+                      >
+                        {displayValue(
+                          lead.current_residential_location ||
+                            lead.current_residence_location ||
+                            lead.location ||
+                            (lead.location_category &&
+                            lead.location_category !== "Other" &&
+                            lead.location_category !== "Profiling in Progress"
+                              ? lead.location_category
+                              : "")
+                        )}
                       </p>
                     </div>
                   </div>
@@ -462,7 +483,23 @@ const CustomerDetailPage = ({ onLogout, currentUser }) => {
                   <DataDNAItem
                     icon={Wallet}
                     label="Budget"
-                    value={lead.budget && lead.budget !== "0" ? `${lead.budget} Cr` : ""}
+                    value={(() => {
+                      const b = lead.budget;
+                      if (
+                        b != null &&
+                        b !== "" &&
+                        b !== "0" &&
+                        b !== 0 &&
+                        b !== "Profiling in Progress"
+                      ) {
+                        const s = String(b).trim();
+                        if (/cr/i.test(s)) return s;
+                        return `${s} Cr`;
+                      }
+                      const bc = (lead.budget_category || "").trim();
+                      if (bc && bc !== "Other" && bc !== "Profiling in Progress") return bc;
+                      return "";
+                    })()}
                   />
                   <DataDNAItem
                     icon={Ruler}
@@ -472,7 +509,7 @@ const CustomerDetailPage = ({ onLogout, currentUser }) => {
                   <DataDNAItem
                     icon={Home}
                     label="Configuration"
-                    value={lead.configuration}
+                    value={lead.configuration || lead.bhk || ""}
                   />
                   <DataDNAItem
                     icon={Clock}

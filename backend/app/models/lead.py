@@ -39,6 +39,7 @@ class LeadDetail(BaseModel):
     designation: Optional[str] = ""
     ethnicity: Optional[str] = ""
     carpet_area: Optional[str] = ""
+    bhk: Optional[str] = ""
     first_name: Optional[str] = ""
     last_name: Optional[str] = ""
     last_interaction: Optional[str] = ""

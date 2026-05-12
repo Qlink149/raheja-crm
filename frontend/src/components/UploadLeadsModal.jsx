@@ -150,14 +150,14 @@ const UploadLeadsModal = ({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="bg-[#141414] border border-white/10 text-white max-w-2xl p-0 overflow-hidden">
-        <DialogHeader className="px-6 pt-6">
+      <DialogContent className="flex max-h-[85vh] flex-col gap-0 overflow-hidden bg-[#141414] border border-white/10 text-white max-w-2xl p-0">
+        <DialogHeader className="shrink-0 px-6 pt-6">
           <DialogTitle className="text-lg font-semibold text-white">
             Add Leads to Campaign
           </DialogTitle>
         </DialogHeader>
 
-        <div className="px-6 pb-6 space-y-5">
+        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 pb-6">
           <div className="border-b border-white/10 pb-3">
             <p className="text-sm font-medium text-white/90">Campaign Details</p>
           </div>
@@ -315,7 +315,7 @@ const UploadLeadsModal = ({
           </div>
         </div>
 
-        <DialogFooter className="flex-row items-center justify-between gap-2 border-t border-white/10 bg-[#101010] px-6 py-4 sm:justify-between sm:space-x-0">
+        <DialogFooter className="shrink-0 flex-row items-center justify-between gap-2 border-t border-white/10 bg-[#101010] px-6 py-4 sm:justify-between sm:space-x-0">
           <Button
             type="button"
             variant="outline"

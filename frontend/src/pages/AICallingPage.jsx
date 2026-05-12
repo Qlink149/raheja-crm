@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
-import { ScrollArea } from "../components/ui/scroll-area";
+import { parseCallTranscriptTurns, WHITELABEL_AGENT_LABEL } from "../utils/callTranscript";
 import {
   Select,
   SelectContent,
@@ -1004,51 +1004,37 @@ const AICallingPage = ({ onLogout, currentUser }) => {
                   </TabsContent>
 
                   <TabsContent value="transcript" className="mt-4 flex-1 min-h-0">
-                    <div className="bg-white/5 rounded-lg p-4 border border-white/10 flex flex-col min-h-0">
-                      <h4 className="kicker mb-4 flex items-center gap-2 flex-shrink-0">
+                    <div className="bg-white/5 rounded-lg p-4 border border-white/10 flex max-h-[70vh] min-h-0 flex-col">
+                      <h4 className="kicker mb-4 flex flex-shrink-0 items-center gap-2">
                         <FileText className="w-4 h-4" />
                         Call Transcript
                       </h4>
                       {selectedCall.transcript ? (
-                        <ScrollArea className="flex-1 min-h-0 max-h-[40vh]">
-                          <div className="space-y-3 pr-3">
-                            {selectedCall.transcript.split("\n").map((line, idx) => {
-                              const isAgent =
-                                line.toLowerCase().startsWith("assistant:") ||
-                                line.toLowerCase().startsWith("ai:");
-                              const isUser =
-                                line.toLowerCase().startsWith("user:") ||
-                                line.toLowerCase().startsWith("customer:");
-                              const cleanLine = line
-                                .replace(/^(assistant|user|ai|customer):/i, "")
-                                .trim();
-
-                              if (!cleanLine) return null;
-
-                              return (
+                        <div className="min-h-[120px] max-h-[55vh] flex-1 overflow-y-auto pr-1">
+                          <div className="space-y-3 pr-2">
+                            {parseCallTranscriptTurns(selectedCall.transcript).map((turn, idx) => (
+                              <div
+                                key={idx}
+                                className={`flex ${turn.isUser ? "justify-end" : "justify-start"}`}
+                              >
                                 <div
-                                  key={idx}
-                                  className={`flex ${
-                                    isUser ? "justify-end" : "justify-start"
+                                  className={`max-w-[80%] rounded-lg px-4 py-2 ${
+                                    turn.isUser
+                                      ? "bg-white/10 text-white"
+                                      : "bg-[#C5A059]/15 text-[#F2D9A8] border border-[#C5A059]/20"
                                   }`}
                                 >
-                                  <div
-                                    className={`max-w-[80%] rounded-lg px-4 py-2 ${
-                                      isUser
-                                        ? "bg-white/10 text-white"
-                                        : "bg-[#C5A059]/15 text-[#F2D9A8] border border-[#C5A059]/20"
-                                    }`}
-                                  >
-                                    <p className="text-xs mb-1 opacity-70">
-                                      {isUser ? "Customer" : "AI Agent"}
-                                    </p>
-                                    <p className="text-sm leading-relaxed">{cleanLine}</p>
-                                  </div>
+                                  <p className="text-xs mb-1 opacity-70">
+                                    {turn.isUser ? "Customer" : WHITELABEL_AGENT_LABEL}
+                                  </p>
+                                  <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
+                                    {turn.text}
+                                  </p>
                                 </div>
-                              );
-                            })}
+                              </div>
+                            ))}
                           </div>
-                        </ScrollArea>
+                        </div>
                       ) : (
                         <p className="text-[#A3A3A3] text-center py-8">
                           No transcript available for this call

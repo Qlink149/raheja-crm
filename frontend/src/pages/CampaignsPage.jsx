@@ -304,6 +304,7 @@ const CampaignsPage = ({ onLogout, currentUser }) => {
 
   const badge = statusBadgeVariant(campaign.status);
   const live = campaign.live_status || {};
+  // API payloads use futwork_* keys; UI copy stays vendor-neutral.
   const platformId = campaign.futwork_campaign_id || "";
 
   return (
