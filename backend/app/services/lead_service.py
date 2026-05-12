@@ -2,10 +2,14 @@ import uuid
 import httpx
 import logging
 from datetime import datetime
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from ..models.lead import LeadDetail
-from ..utils.csv_processor import process_row_to_lead, generate_seed_key
+from ..utils.csv_processor import (
+    process_row_to_lead,
+    generate_seed_key,
+    process_call_report_row_to_call_history_and_lead_patches,
+)
 from ..core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -25,38 +29,117 @@ def _safe_row(row: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+def _ten_digit_key_for_futwork(lead: Dict[str, Any]) -> str:
+    """Same normalization as push_to_futwork loop: last 10 digits for dedupe / push."""
+    raw_phone = (
+        lead.get("recipientPhoneNumber")
+        or lead.get("mobile_digits")
+        or lead.get("mobile", "")
+    )
+    db_digits = (lead.get("mobile_digits") or "").strip()
+    db_digits = "".join(c for c in db_digits if c.isdigit())[-10:]
+    if not raw_phone:
+        return db_digits if len(db_digits) == 10 else ""
+    phone = "".join(c for c in str(raw_phone) if c.isdigit())[-10:]
+    match_digits = phone if len(phone) == 10 else db_digits
+    if len(phone) == 10:
+        return phone
+    return match_digits if len(match_digits) == 10 else ""
+
+
+def _dedupe_leads_for_futwork(leads: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """One Futwork POST per 10-digit mobile; last row in upload order wins."""
+    by_digits: Dict[str, Dict[str, Any]] = {}
+    tail: List[Dict[str, Any]] = []
+    for lead in leads:
+        key = _ten_digit_key_for_futwork(lead)
+        if len(key) == 10:
+            by_digits[key] = lead
+        else:
+            tail.append(lead)
+    return list(by_digits.values()) + tail
+
+
 class LeadService:
     def __init__(self, db: AsyncIOMotorDatabase):
         self.db = db
+
+    def _build_leads_query(
+        self,
+        search: Optional[str],
+        filters: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Mongo match for list/count. VIP expands legacy rows missing `is_vip`."""
+        import re
+
+        parts: List[Dict[str, Any]] = []
+
+        if search:
+            esc = re.escape(search)
+            digits = re.sub(r"\D+", "", search)
+            ors = [
+                {"full_name": {"$regex": esc, "$options": "i"}},
+                {"first_name": {"$regex": esc, "$options": "i"}},
+                {"last_name": {"$regex": esc, "$options": "i"}},
+                {"project": {"$regex": esc, "$options": "i"}},
+                {"mobile": {"$regex": esc, "$options": "i"}},
+            ]
+            if digits:
+                ors.append({"mobile_digits": {"$regex": digits}})
+                if len(digits) > 10:
+                    ors.append({"mobile_digits": {"$regex": digits[-10:]}})
+            parts.append({"$or": ors})
+
+        other: Dict[str, Any] = {}
+        vip_expand = False
+        if filters:
+            for key, value in filters.items():
+                if value is None or value == "all" or value == "":
+                    continue
+                if key == "qualification_category":
+                    other["qualification_category"] = value
+                    continue
+                if key == "is_vip" and value is True:
+                    vip_expand = True
+                elif key == "is_vip":
+                    other[key] = value
+                else:
+                    other[key] = value
+
+        if vip_expand:
+            parts.append(
+                {
+                    "$or": [
+                        {"is_vip": True},
+                        {"temperature": "Hot"},
+                        {"budget_category": {"$in": ["5 Cr+", "2-5 Cr"]}},
+                    ]
+                }
+            )
+
+        if other:
+            parts.append(other)
+
+        if not parts:
+            return {}
+        if len(parts) == 1:
+            return parts[0]
+        return {"$and": parts}
+
+    async def count_leads(
+        self,
+        search: Optional[str] = None,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> int:
+        query = self._build_leads_query(search, filters)
+        return await self.db.leads.count_documents(query)
 
     async def get_leads(self,
                         skip: int = 0,
                         limit: int = 50,
                         search: Optional[str] = None,
                         filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-        import re
-        query = {}
-        if search:
-            esc = re.escape(search)
-            digits = re.sub(r"\D+", "", search)
-            ors = [
-                {'full_name': {'$regex': esc, '$options': 'i'}},
-                {'first_name': {'$regex': esc, '$options': 'i'}},
-                {'last_name': {'$regex': esc, '$options': 'i'}},
-                {'project': {'$regex': esc, '$options': 'i'}},
-                {'mobile': {'$regex': esc, '$options': 'i'}},
-            ]
-            if digits:
-                ors.append({'mobile_digits': {'$regex': digits}})
-                if len(digits) > 10:
-                    ors.append({'mobile_digits': {'$regex': digits[-10:]}})
-            query['$or'] = ors
-
-        if filters:
-            for key, value in filters.items():
-                if value is not None and value != "all" and value != "":
-                    query[key] = value
-
+        query = self._build_leads_query(search, filters)
         cursor = self.db.leads.find(query, {"_id": 0}).sort("updated_at", -1).skip(skip).limit(limit)
         return await cursor.to_list(length=limit)
 
@@ -144,6 +227,112 @@ class LeadService:
             "failed_rows": failed_rows,
         }
 
+    async def upsert_call_report_from_csv(
+        self,
+        rows: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """
+        Ingest Futwork "unmasked call report" CSV rows.
+
+        - Upsert into `call_history` using callSid as id (call-level truth).
+        - Update `leads` with last_call_* snapshot fields (non-destructive).
+        """
+        processed = 0
+        call_history_upserted = 0
+        leads_updated = 0
+        failed_rows: List[Dict[str, Any]] = []
+
+        for idx, row in enumerate(rows or []):
+            try:
+                call_history_set, lead_set, call_sid = (
+                    process_call_report_row_to_call_history_and_lead_patches(row)
+                )
+            except Exception as e:
+                failed_rows.append(
+                    {
+                        "row_index": idx,
+                        "reason": f"call report mapping failed: {e}",
+                        "raw": _safe_row(row),
+                    }
+                )
+                continue
+
+            if not call_sid:
+                failed_rows.append(
+                    {
+                        "row_index": idx,
+                        "reason": "missing callSid",
+                        "raw": _safe_row(row),
+                    }
+                )
+                continue
+
+            mobile_digits = str(lead_set.get("mobile_digits") or "").strip()
+            if not mobile_digits:
+                failed_rows.append(
+                    {
+                        "row_index": idx,
+                        "reason": "missing phone/mobile_digits",
+                        "raw": _safe_row(row),
+                    }
+                )
+                continue
+
+            # Only set value-bearing fields (avoid wiping with blanks)
+            call_history_set = {
+                k: v
+                for k, v in (call_history_set or {}).items()
+                if v is not None and v != "" and k != "_id"
+            }
+            lead_set = {
+                k: v
+                for k, v in (lead_set or {}).items()
+                if v is not None and v != "" and k != "_id"
+            }
+
+            try:
+                # Upsert call_history (call-level truth)
+                await self.db.call_history.update_one(
+                    {"id": call_sid},
+                    {
+                        "$set": call_history_set,
+                        "$setOnInsert": {"created_at": call_history_set.get("created_at") or datetime.utcnow()},
+                        "$push": {"status_history": {"status": call_history_set.get("status", ""), "at": datetime.utcnow()}},
+                    },
+                    upsert=True,
+                )
+                call_history_upserted += 1
+
+                # Update lead snapshot (best-effort; don't create leads from call report)
+                lead_update = dict(lead_set)
+                lead_update.pop("mobile_digits", None)
+                lead_update.pop("mobile", None)
+                if lead_update:
+                    res = await self.db.leads.update_one(
+                        {"mobile_digits": mobile_digits},
+                        {"$set": lead_update},
+                    )
+                    if res.matched_count:
+                        leads_updated += 1
+
+                processed += 1
+            except Exception as e:
+                logger.exception("Call report row %s failed upsert", idx)
+                failed_rows.append(
+                    {
+                        "row_index": idx,
+                        "reason": f"db upsert failed: {e}",
+                        "raw": _safe_row(row),
+                    }
+                )
+
+        return {
+            "processed": processed,
+            "call_history_upserted": call_history_upserted,
+            "leads_updated": leads_updated,
+            "failed_rows": failed_rows,
+        }
+
     async def update_disposition(self, lead_id: str, disposition: str) -> bool:
         """Update disposition on a lead. Returns True if a document was found and updated."""
         result = await self.db.leads.update_one(
@@ -151,6 +340,22 @@ class LeadService:
             {"$set": {"disposition": disposition, "updated_at": datetime.utcnow()}}
         )
         return result.matched_count > 0
+
+    async def ensure_residential_alias(self, lead_id: str) -> None:
+        """Ensure current_residential_location mirrors current_residence_location for a lead."""
+        lead = await self.db.leads.find_one(
+            {"id": lead_id},
+            {"current_residence_location": 1, "current_residential_location": 1},
+        )
+        if not lead:
+            return
+        src = (lead.get("current_residence_location") or "").strip()
+        alias = (lead.get("current_residential_location") or "").strip()
+        if src and not alias:
+            await self.db.leads.update_one(
+                {"id": lead_id},
+                {"$set": {"current_residential_location": src, "updated_at": datetime.utcnow()}},
+            )
 
     @staticmethod
     def _extract_futwork_lead_id(body: Any) -> str:
@@ -200,7 +405,7 @@ class LeadService:
         self,
         leads: List[Dict[str, Any]],
         campaign_id: Optional[str] = None,
-    ) -> bool:
+    ) -> Tuple[int, int]:
         """
         Push leads to Futwork Platform API.
 
@@ -220,7 +425,12 @@ class LeadService:
         """
         if not settings.FUTWORK_API_KEY or not settings.FUTWORK_CAMPAIGN_ID:
             logger.warning("Futwork credentials missing. Skipping direct push.")
-            return False
+            return (0, 0)
+
+        n_in = len(leads)
+        leads = _dedupe_leads_for_futwork(leads)
+        if len(leads) != n_in:
+            logger.info("Futwork push: deduped %s -> %s leads by mobile", n_in, len(leads))
 
         endpoint = (
             f"https://platform.futwork.ai/api/campaigns/"
@@ -345,7 +555,7 @@ class LeadService:
                 failed,
                 len(leads),
             )
-            return failed == 0
+            return (pushed, failed)
         except Exception as e:
             logger.error("Futwork push_to_futwork error: %s", e, exc_info=True)
-            return False
+            return (pushed, failed)

@@ -1,16 +1,14 @@
-import { useState, useEffect, useRef } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { useState, useEffect, useRef, useMemo, useCallback, memo } from "react";
+import { motion } from "framer-motion";
 import { toast } from "sonner";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Phone,
   PhoneCall,
   Clock,
-  Calendar,
   User,
   Play,
   Pause,
-  X,
-  ChevronDown,
   Filter,
   Search,
   FileText,
@@ -39,546 +37,822 @@ import {
 } from "../components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import Sidebar from "../components/Sidebar";
+import EmptyState from "../components/feedback/EmptyState";
+import { CallTableSkeleton } from "../components/feedback/Skeletons";
 import { api } from "../lib/api";
 
+const PAGE_SIZE = 50;
+const ROW_HEIGHT = 64; // px, matches the grid row's effective height
+
+// -----------------------------------------------------------------------------
+// Module-scope helpers (pure, never re-allocated per render)
+// -----------------------------------------------------------------------------
+
+const formatDuration = (seconds) => {
+  if (!seconds) return "0s";
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  if (mins > 0) return `${mins}m ${secs}s`;
+  return `${secs}s`;
+};
+
+const formatDate = (dateStr) => {
+  if (!dateStr) return "N/A";
+  const date = new Date(dateStr);
+  return date.toLocaleString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+};
+
+const DISPOSITION_STYLES = {
+  Interested: "bg-emerald-900/30 text-emerald-300 border-emerald-500/30",
+  "Semi-Interested": "bg-cyan-900/30 text-cyan-300 border-cyan-500/30",
+  "Not Interested": "bg-red-900/30 text-red-300 border-red-500/30",
+  Busy: "bg-yellow-900/30 text-yellow-300 border-yellow-500/30",
+  Dropped: "bg-orange-900/30 text-orange-300 border-orange-500/30",
+  "Incomplete conversation": "bg-gray-900/30 text-gray-300 border-gray-500/30",
+};
+
+const STATUS_STYLES = {
+  completed: "bg-emerald-900/30 text-emerald-300",
+  "no-answer": "bg-yellow-900/30 text-yellow-300",
+  busy: "bg-orange-900/30 text-orange-300",
+  failed: "bg-red-900/30 text-red-300",
+};
+
+const getDispositionBadge = (d) =>
+  DISPOSITION_STYLES[d] || "bg-gray-900/30 text-gray-300 border-gray-500/30";
+
+const getStatusBadge = (s) =>
+  STATUS_STYLES[s] || "bg-gray-900/30 text-gray-300";
+
+const StatusIcon = ({ status }) => {
+  switch (status) {
+    case "completed":
+      return <CheckCircle className="w-4 h-4" />;
+    case "no-answer":
+      return <PhoneMissed className="w-4 h-4" />;
+    case "busy":
+      return <AlertCircle className="w-4 h-4" />;
+    case "failed":
+      return <XCircle className="w-4 h-4" />;
+    default:
+      return <Phone className="w-4 h-4" />;
+  }
+};
+
+// -----------------------------------------------------------------------------
+// Memoized CallRow — only re-renders when the row's actual data changes.
+// -----------------------------------------------------------------------------
+const CallRow = memo(
+  function CallRow({ call, onSelect, style }) {
+    return (
+      <div
+        style={style}
+        className="grid grid-cols-7 gap-2 px-4 py-3 hover:bg-white/5 cursor-pointer transition-colors duration-200 items-center border-b border-white/5"
+        onClick={() => onSelect(call)}
+      >
+        {/* Customer */}
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#C5A059] to-[#8A6D3B] flex items-center justify-center text-black text-xs font-semibold flex-shrink-0">
+            {call.customer_name ? call.customer_name.charAt(0).toUpperCase() : "?"}
+          </div>
+          <span className="text-white text-sm truncate">
+            {call.customer_name || "Unknown"}
+          </span>
+        </div>
+
+        {/* Phone */}
+        <span className="text-[#A3A3A3] text-sm font-mono truncate tabular-nums">
+          {call.phone || "N/A"}
+        </span>
+
+        {/* Timestamp */}
+        <span className="text-[#A3A3A3] text-sm tabular-nums truncate">
+          {formatDate(call.created_at)}
+        </span>
+
+        {/* Duration */}
+        <span className="text-[#C5A059] text-sm font-medium tabular-nums">
+          {formatDuration(call.duration)}
+        </span>
+
+        {/* Disposition */}
+        <div className="min-w-0">
+          {call.disposition && (
+            <span
+              className={`px-2 py-1 rounded text-xs border inline-block truncate max-w-full ${getDispositionBadge(
+                call.disposition
+              )}`}
+            >
+              {call.disposition}
+            </span>
+          )}
+        </div>
+
+        {/* Status */}
+        <div>
+          <span
+            className={`px-2 py-1 rounded text-xs flex items-center gap-1 w-fit ${getStatusBadge(
+              call.status
+            )}`}
+          >
+            <StatusIcon status={call.status} />
+            <span className="capitalize">{call.status}</span>
+          </span>
+        </div>
+
+        {/* Action */}
+        <div>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="text-[#C5A059] hover:text-[#E5C585] hover:bg-[#C5A059]/10 btn-tactile"
+            onClick={(e) => {
+              e.stopPropagation();
+              onSelect(call);
+            }}
+          >
+            View Details
+          </Button>
+        </div>
+      </div>
+    );
+  },
+  (prev, next) => {
+    const a = prev.call;
+    const b = next.call;
+    return (
+      a.id === b.id &&
+      a.disposition === b.disposition &&
+      a.status === b.status &&
+      a.duration === b.duration &&
+      a.customer_name === b.customer_name &&
+      a.phone === b.phone &&
+      a.created_at === b.created_at &&
+      prev.onSelect === next.onSelect
+    );
+  }
+);
+
+// -----------------------------------------------------------------------------
+// Stat tile (memoized, no re-render unless value changes)
+// -----------------------------------------------------------------------------
+const StatTile = memo(function StatTile({
+  icon: Icon,
+  label,
+  value,
+  tone = "gold",
+  delay = 0,
+}) {
+  const toneMap = {
+    gold: { iconBg: "bg-[#C5A059]/20", iconColor: "text-[#C5A059]", labelColor: "text-[#C5A059]" },
+    emerald: { iconBg: "bg-emerald-900/30", iconColor: "text-emerald-400", labelColor: "text-emerald-400" },
+    blue: { iconBg: "bg-blue-900/30", iconColor: "text-blue-400", labelColor: "text-blue-400" },
+    cyan: { iconBg: "bg-cyan-900/30", iconColor: "text-cyan-400", labelColor: "text-cyan-400" },
+    purple: { iconBg: "bg-purple-900/30", iconColor: "text-purple-400", labelColor: "text-purple-400" },
+  };
+  const t = toneMap[tone] || toneMap.gold;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay, duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+      className="glass-card rounded-xl p-6 hover-lift"
+    >
+      <div className="flex items-center gap-3 mb-3">
+        <div className={`p-3 ${t.iconBg} rounded-lg flex-shrink-0`}>
+          <Icon className={`w-5 h-5 ${t.iconColor}`} />
+        </div>
+        <span className={`kicker ${t.labelColor} whitespace-nowrap`}>{label}</span>
+      </div>
+      <p className="text-3xl font-display text-white tabular-nums">{value}</p>
+    </motion.div>
+  );
+});
+
+// -----------------------------------------------------------------------------
+// Main page
+// -----------------------------------------------------------------------------
 const AICallingPage = ({ onLogout, currentUser }) => {
   const [calls, setCalls] = useState([]);
   const [campaigns, setCampaigns] = useState([]);
+  const [statusOptions, setStatusOptions] = useState([]);
+  const [dispositionOptions, setDispositionOptions] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [currentCampaign, setCurrentCampaign] = useState(null);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [selectedCampaign, setSelectedCampaign] = useState("all");
   const [selectedCall, setSelectedCall] = useState(null);
   const [showCallDetail, setShowCallDetail] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [dispositionFilter, setDispositionFilter] = useState("all");
   const [updatingDisposition, setUpdatingDisposition] = useState(false);
-  
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [summary, setSummary] = useState(null);
+  const [aiBatchSummary, setAiBatchSummary] = useState(null);
+
   // Audio player state
   const [isPlaying, setIsPlaying] = useState(false);
   const [audioProgress, setAudioProgress] = useState(0);
   const [audioDuration, setAudioDuration] = useState(0);
   const audioRef = useRef(null);
 
+  // Virtual list scroll container
+  const scrollContainerRef = useRef(null);
+
+  // -------- Debounced search --------
   useEffect(() => {
-    fetchCallHistory();
-    // Fetch ALL calls once — filter and search are applied client-side.
-    // This eliminates race conditions between rapidly-changing filters and
-    // the network response order.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const t = setTimeout(() => setDebouncedSearch(searchQuery), 400);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
+
+  // -------- Bootstrap filters --------
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [filRes, campRes] = await Promise.allSettled([
+          api.get("/call-history/filters"),
+          api.get("/campaigns/current"),
+        ]);
+        if (cancelled) return;
+        if (filRes.status === "fulfilled") {
+          const d = filRes.value.data || {};
+          setCampaigns(Array.isArray(d.campaigns) ? d.campaigns : []);
+          setStatusOptions(Array.isArray(d.statuses) ? d.statuses : []);
+          setDispositionOptions(Array.isArray(d.dispositions) ? d.dispositions : []);
+        }
+        // currentCampaign isn't used in render today but the fetch is kept
+        // identical to avoid changing API behavior.
+        void campRes;
+      } catch (e) {
+        console.error(e);
+        toast.error("Could not load campaign filters");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  const fetchCallHistory = async () => {
-    setLoading(true);
-    try {
-      const [callsResult, campaignResult] = await Promise.allSettled([
-        api.get("/call-history"),
-        api.get("/campaigns/current"),
-      ]);
-      if (callsResult.status === "fulfilled") {
-        setCalls(callsResult.value.data.calls || []);
-        setCampaigns(callsResult.value.data.campaigns || []);
-      } else {
-        console.error("Error fetching call history:", callsResult.reason);
+  // -------- Params builders (stable) --------
+  const listParams = useCallback(
+    (pageNum) => ({
+      page: pageNum,
+      size: PAGE_SIZE,
+      ...(selectedCampaign && selectedCampaign !== "all" ? { campaign: selectedCampaign } : {}),
+      ...(statusFilter && statusFilter !== "all" ? { status: statusFilter } : {}),
+      ...(dispositionFilter && dispositionFilter !== "all"
+        ? { disposition: dispositionFilter }
+        : {}),
+      ...(debouncedSearch.trim() ? { q: debouncedSearch.trim() } : {}),
+    }),
+    [selectedCampaign, statusFilter, dispositionFilter, debouncedSearch]
+  );
+
+  const summaryParams = useCallback(
+    () => ({
+      ...(selectedCampaign && selectedCampaign !== "all" ? { campaign: selectedCampaign } : {}),
+      ...(statusFilter && statusFilter !== "all" ? { status: statusFilter } : {}),
+      ...(dispositionFilter && dispositionFilter !== "all"
+        ? { disposition: dispositionFilter }
+        : {}),
+      ...(debouncedSearch.trim() ? { q: debouncedSearch.trim() } : {}),
+    }),
+    [selectedCampaign, statusFilter, dispositionFilter, debouncedSearch]
+  );
+
+  // -------- Primary fetch on filter change --------
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      setPage(1);
+      try {
+        const [listRes, sumRes, aiSumRes] = await Promise.all([
+          api.get("/call-history", { params: listParams(1) }),
+          api.get("/call-history/summary", { params: summaryParams() }),
+          api.get("/call-history/ai-batch-summary", { params: summaryParams() }),
+        ]);
+        if (cancelled) return;
+        setCalls(listRes.data?.calls || []);
+        setTotal(Number(listRes.data?.total ?? 0));
+        setHasMore(Boolean(listRes.data?.has_more));
+        setPage(1);
+        setSummary(sumRes.data || null);
+        setAiBatchSummary(aiSumRes.data?.batch_summary || null);
+      } catch (error) {
+        console.error("Error fetching call history:", error);
         toast.error("Failed to load call history");
         setCalls([]);
-        setCampaigns([]);
+        setTotal(0);
+        setHasMore(false);
+        setSummary(null);
+        setAiBatchSummary(null);
+      } finally {
+        if (!cancelled) setLoading(false);
       }
-      if (campaignResult.status === "fulfilled") {
-        setCurrentCampaign(campaignResult.value.data);
-      } else {
-        setCurrentCampaign(null);
-      }
-    } catch (error) {
-      console.error("Error fetching call history:", error);
-      toast.error("Failed to load call history");
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [listParams, summaryParams]);
+
+  const handleLoadMore = useCallback(async () => {
+    if (loadingMore || !hasMore) return;
+    const nextPage = page + 1;
+    setLoadingMore(true);
+    try {
+      const res = await api.get("/call-history", { params: listParams(nextPage) });
+      const nextCalls = res.data?.calls || [];
+      setCalls((prev) => [...prev, ...nextCalls]);
+      setPage(nextPage);
+      setHasMore(Boolean(res.data?.has_more));
+    } catch (e) {
+      console.error(e);
+      toast.error("Could not load more calls");
     } finally {
-      setLoading(false);
+      setLoadingMore(false);
     }
-  };
+  }, [loadingMore, hasMore, page, listParams]);
 
-  const formatDuration = (seconds) => {
-    if (!seconds) return "0s";
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    if (mins > 0) {
-      return `${mins}m ${secs}s`;
-    }
-    return `${secs}s`;
-  };
-
-  const formatDate = (dateStr) => {
-    if (!dateStr) return "N/A";
-    const date = new Date(dateStr);
-    return date.toLocaleString("en-IN", {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  };
-
-  const getDispositionBadge = (disposition) => {
-    const styles = {
-      "Interested": "bg-emerald-900/30 text-emerald-300 border-emerald-500/30",
-      "Semi-Interested": "bg-cyan-900/30 text-cyan-300 border-cyan-500/30",
-      "Not Interested": "bg-red-900/30 text-red-300 border-red-500/30",
-      "Busy": "bg-yellow-900/30 text-yellow-300 border-yellow-500/30",
-      "Dropped": "bg-orange-900/30 text-orange-300 border-orange-500/30",
-      "Incomplete conversation": "bg-gray-900/30 text-gray-300 border-gray-500/30",
-    };
-    return styles[disposition] || "bg-gray-900/30 text-gray-300 border-gray-500/30";
-  };
-
-  const getStatusBadge = (status) => {
-    const styles = {
-      "completed": "bg-emerald-900/30 text-emerald-300",
-      "no-answer": "bg-yellow-900/30 text-yellow-300",
-      "busy": "bg-orange-900/30 text-orange-300",
-      "failed": "bg-red-900/30 text-red-300",
-    };
-    return styles[status] || "bg-gray-900/30 text-gray-300";
-  };
-
-  const getStatusIcon = (status) => {
-    switch (status) {
-      case "completed":
-        return <CheckCircle className="w-4 h-4" />;
-      case "no-answer":
-        return <PhoneMissed className="w-4 h-4" />;
-      case "busy":
-        return <AlertCircle className="w-4 h-4" />;
-      case "failed":
-        return <XCircle className="w-4 h-4" />;
-      default:
-        return <Phone className="w-4 h-4" />;
-    }
-  };
-
-  const handlePlayPause = () => {
+  // -------- Audio player --------
+  const handlePlayPause = useCallback(() => {
     if (audioRef.current) {
-      if (isPlaying) {
-        audioRef.current.pause();
-      } else {
-        audioRef.current.play();
-      }
+      if (isPlaying) audioRef.current.pause();
+      else audioRef.current.play();
       setIsPlaying(!isPlaying);
     }
-  };
+  }, [isPlaying]);
 
-  const handleTimeUpdate = () => {
-    if (audioRef.current) {
-      setAudioProgress(audioRef.current.currentTime);
-    }
-  };
+  const handleTimeUpdate = useCallback(() => {
+    if (audioRef.current) setAudioProgress(audioRef.current.currentTime);
+  }, []);
 
-  const handleLoadedMetadata = () => {
-    if (audioRef.current) {
-      setAudioDuration(audioRef.current.duration);
-    }
-  };
+  const handleLoadedMetadata = useCallback(() => {
+    if (audioRef.current) setAudioDuration(audioRef.current.duration);
+  }, []);
 
-  const handleSeek = (e) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const percent = (e.clientX - rect.left) / rect.width;
-    if (audioRef.current) {
-      audioRef.current.currentTime = percent * audioDuration;
-    }
-  };
+  const handleSeek = useCallback(
+    (e) => {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const percent = (e.clientX - rect.left) / rect.width;
+      if (audioRef.current) audioRef.current.currentTime = percent * audioDuration;
+    },
+    [audioDuration]
+  );
 
-  const updateDisposition = async (call, newDisposition) => {
-    if (!call?.lead_id) return;
-    setUpdatingDisposition(true);
-    try {
-      await api.patch(`/leads/${call.lead_id}/disposition`, {
-        disposition: newDisposition,
-      });
-      toast.success(`Marked as ${newDisposition}`);
-      // Update local state so UI reflects change immediately
-      setCalls((prev) =>
-        prev.map((c) =>
-          c.lead_id === call.lead_id ? { ...c, disposition: newDisposition } : c
-        )
-      );
-      setSelectedCall((prev) =>
-        prev && prev.lead_id === call.lead_id
-          ? { ...prev, disposition: newDisposition }
-          : prev
-      );
-    } catch (err) {
-      toast.error(err?.response?.data?.detail || "Failed to update disposition");
-    } finally {
-      setUpdatingDisposition(false);
-    }
-  };
+  const handleSelectCall = useCallback((call) => {
+    setSelectedCall(call);
+    setShowCallDetail(true);
+    setIsPlaying(false);
+    setAudioProgress(0);
+  }, []);
 
-  // Normalise text for comparison: lowercase + collapse whitespace.
-  const normText = (s) => (s || "").toString().toLowerCase().replace(/\s+/g, " ").trim();
-  // Digits-only helper for phone matching.
-  const digitsOnly = (s) => (s || "").toString().replace(/\D+/g, "");
+  const updateDisposition = useCallback(
+    async (call, newDisposition) => {
+      if (!call?.lead_id) return;
+      setUpdatingDisposition(true);
+      try {
+        await api.patch(`/leads/${call.lead_id}/disposition`, {
+          disposition: newDisposition,
+        });
+        toast.success(`Marked as ${newDisposition}`);
+        setCalls((prev) =>
+          prev.map((c) =>
+            c.lead_id === call.lead_id ? { ...c, disposition: newDisposition } : c
+          )
+        );
+        setSelectedCall((prev) =>
+          prev && prev.lead_id === call.lead_id
+            ? { ...prev, disposition: newDisposition }
+            : prev
+        );
+      } catch (err) {
+        toast.error(err?.response?.data?.detail || "Failed to update disposition");
+      } finally {
+        setUpdatingDisposition(false);
+      }
+    },
+    []
+  );
 
-  // Single client-side filter pipeline — no race conditions, no stale state.
-  const filteredCalls = calls.filter((call) => {
-    // Campaign filter (exact, case-insensitive)
-    if (selectedCampaign && selectedCampaign !== "all") {
-      if (normText(call.campaign) !== normText(selectedCampaign)) return false;
-    }
-    // Status filter (case-insensitive on call.status OR lead-level fields)
-    if (statusFilter && statusFilter !== "all") {
-      if (normText(call.status) !== normText(statusFilter)) return false;
-    }
-    // Disposition filter (case-insensitive)
-    if (dispositionFilter && dispositionFilter !== "all") {
-      if (normText(call.disposition) !== normText(dispositionFilter)) return false;
-    }
-    // Search filter (name OR phone, with phone-digits normalisation)
-    const raw = (searchQuery || "").trim();
-    if (raw) {
-      const qText = normText(raw);
-      const qDigits = digitsOnly(raw);
-      const name = normText(call.customer_name);
-      const phoneDigits = digitsOnly(call.phone);
-      const nameMatch = qText && name.includes(qText);
-      const phoneMatch =
-        qDigits &&
-        (phoneDigits.includes(qDigits) || phoneDigits.slice(-10).includes(qDigits));
-      if (!nameMatch && !phoneMatch) return false;
-    }
-    return true;
+  // -------- Memoized derived values --------
+  const stats = useMemo(
+    () => ({
+      total: Number(summary?.total_calls ?? total ?? 0),
+      completed: Number(summary?.completed ?? 0),
+      interested: Number(summary?.interested ?? 0),
+      semiInterested: Number(summary?.semi_interested ?? 0),
+      avgDuration: Number(summary?.avg_duration_seconds ?? 0),
+    }),
+    [summary, total]
+  );
+
+  const aiStats = useMemo(
+    () => ({
+      total: Number(aiBatchSummary?.total_calls ?? 0),
+      hot: Number(aiBatchSummary?.hot_leads ?? 0),
+      semi: Number(aiBatchSummary?.semi_interested ?? 0),
+      mild: Number(aiBatchSummary?.mildly_interested ?? 0),
+      not: Number(aiBatchSummary?.not_interested ?? 0),
+      voicemail: Number(aiBatchSummary?.voicemail_wrong_number ?? 0),
+      bought: Number(aiBatchSummary?.already_bought ?? 0),
+      incorrect: Number(aiBatchSummary?.system_tags_incorrect ?? 0),
+    }),
+    [aiBatchSummary]
+  );
+
+  const aiBuckets = useMemo(
+    () => [
+      { label: "Hot", value: aiStats.hot },
+      { label: "Semi", value: aiStats.semi },
+      { label: "Mild", value: aiStats.mild },
+      { label: "Not Interested", value: aiStats.not },
+      { label: "Voicemail/Wrong #", value: aiStats.voicemail },
+      { label: "Already Bought", value: aiStats.bought },
+    ],
+    [aiStats]
+  );
+
+  const fallbackStatuses = ["completed", "no-answer", "busy", "failed"];
+  const fallbackDispositions = [
+    "Interested",
+    "Semi-Interested",
+    "Not Interested",
+    "Busy",
+    "Dropped",
+    "Incomplete conversation",
+  ];
+  const statusList = statusOptions.length ? statusOptions : fallbackStatuses;
+  const dispositionList = dispositionOptions.length
+    ? dispositionOptions
+    : fallbackDispositions;
+
+  const handleResetFilters = useCallback(() => {
+    setSelectedCampaign("all");
+    setStatusFilter("all");
+    setDispositionFilter("all");
+    setSearchQuery("");
+  }, []);
+
+  // -------- Virtualizer --------
+  const virtualizer = useVirtualizer({
+    count: calls.length,
+    getScrollElement: () => scrollContainerRef.current,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: 8,
   });
-
-  // Stats reflect the currently-filtered view (consistent with the table)
-  const totalCalls = filteredCalls.length;
-  const completedCalls = filteredCalls.filter(c => normText(c.status) === 'completed').length;
-  const interestedCalls = filteredCalls.filter(c => normText(c.disposition) === 'interested').length;
-  const semiInterestedCount =
-    Number(currentCampaign?.dispositions?.semiInterested ?? 0) || 0;
-  const avgDuration = filteredCalls.length > 0
-    ? Math.round(filteredCalls.reduce((sum, c) => sum + (c.duration || 0), 0) / filteredCalls.length)
-    : 0;
+  const virtualItems = virtualizer.getVirtualItems();
+  const totalSize = virtualizer.getTotalSize();
 
   return (
     <div className="min-h-screen bg-[#0D0D0D] flex">
       <Sidebar onLogout={onLogout} currentUser={currentUser} />
-      
+
       <main className="flex-1 p-8 ml-20 lg:ml-64">
         {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
           className="mb-8"
         >
-          <h1 className="font-serif text-3xl text-white mb-2">
-            AI Calling Campaign
+          <h1 className="font-serif text-3xl text-white mb-2 tracking-tight">
+            AI Calling Engine
           </h1>
           <p className="text-[#A3A3A3]">
-            View all AI calls made for Rustomjee campaigns
+            Live record of every AI-placed call for Rustomjee campaigns
           </p>
         </motion.div>
 
-        {/* Stats Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-8">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="glass-card rounded-xl p-6"
-          >
-            <div className="flex items-center gap-3 mb-3">
-              <div className="p-3 bg-[#C5A059]/20 rounded-lg flex-shrink-0">
-                <PhoneCall className="w-5 h-5 text-[#C5A059]" />
-              </div>
-              <span className="text-xs uppercase tracking-widest text-[#C5A059] whitespace-nowrap">
-                Total Calls
-              </span>
-            </div>
-            <p className="text-3xl font-serif text-white">{totalCalls}</p>
-          </motion.div>
-
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.1 }}
-            className="glass-card rounded-xl p-6"
-          >
-            <div className="flex items-center gap-3 mb-3">
-              <div className="p-3 bg-emerald-900/30 rounded-lg flex-shrink-0">
-                <CheckCircle className="w-5 h-5 text-emerald-400" />
-              </div>
-              <span className="text-xs uppercase tracking-widest text-emerald-400 whitespace-nowrap">
-                Completed
-              </span>
-            </div>
-            <p className="text-3xl font-serif text-white">{completedCalls}</p>
-          </motion.div>
-
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2 }}
-            className="glass-card rounded-xl p-6"
-          >
-            <div className="flex items-center gap-3 mb-3">
-              <div className="p-3 bg-blue-900/30 rounded-lg flex-shrink-0">
-                <User className="w-5 h-5 text-blue-400" />
-              </div>
-              <span className="text-xs uppercase tracking-widest text-blue-400 whitespace-nowrap">
-                Interested
-              </span>
-            </div>
-            <p className="text-3xl font-serif text-white">{interestedCalls}</p>
-          </motion.div>
-
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.25 }}
-            className="glass-card rounded-xl p-6"
-          >
-            <div className="flex items-center gap-3 mb-3">
-              <div className="p-3 bg-cyan-900/30 rounded-lg flex-shrink-0">
-                <Sparkles className="w-5 h-5 text-cyan-400" />
-              </div>
-              <span className="text-xs uppercase tracking-widest text-cyan-400 whitespace-nowrap">
-                Semi-Interested
-              </span>
-            </div>
-            <p className="text-3xl font-serif text-white">{semiInterestedCount}</p>
-          </motion.div>
-
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.3 }}
-            className="glass-card rounded-xl p-6"
-          >
-            <div className="flex items-center gap-3 mb-3">
-              <div className="p-3 bg-purple-900/30 rounded-lg flex-shrink-0">
-                <Clock className="w-5 h-5 text-purple-400" />
-              </div>
-              <span className="text-xs uppercase tracking-widest text-purple-400 whitespace-nowrap">
-                Avg Duration
-              </span>
-            </div>
-            <p className="text-3xl font-serif text-white">{formatDuration(avgDuration)}</p>
-          </motion.div>
-        </div>
-
-        {/* Filters */}
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          className="glass-card rounded-xl p-4 mb-6"
-        >
-          <div className="flex items-center gap-4 flex-wrap">
-            {/* Campaign Filter */}
-            <div className="flex items-center gap-2">
-              <Filter className="w-4 h-4 text-[#C5A059]" />
-              <Select value={selectedCampaign} onValueChange={setSelectedCampaign}>
-                <SelectTrigger className="w-[200px] bg-[#1A1A1A] border-white/10 text-white">
-                  <SelectValue placeholder="All Campaigns" />
-                </SelectTrigger>
-                <SelectContent className="bg-[#1A1A1A] border-white/10">
-                  <SelectItem value="all">All Campaigns</SelectItem>
-                  {campaigns.map((campaign) => (
-                    <SelectItem key={campaign} value={campaign}>
-                      {campaign}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Status Filter */}
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-[150px] bg-[#1A1A1A] border-white/10 text-white">
-                <SelectValue placeholder="All Status" />
-              </SelectTrigger>
-              <SelectContent className="bg-[#1A1A1A] border-white/10">
-                <SelectItem value="all">All Status</SelectItem>
-                <SelectItem value="completed">Completed</SelectItem>
-                <SelectItem value="no-answer">No Answer</SelectItem>
-                <SelectItem value="busy">Busy</SelectItem>
-                <SelectItem value="failed">Failed</SelectItem>
-              </SelectContent>
-            </Select>
-
-            {/* Disposition Filter */}
-            <Select value={dispositionFilter} onValueChange={setDispositionFilter}>
-              <SelectTrigger className="w-[180px] bg-[#1A1A1A] border-white/10 text-white">
-                <SelectValue placeholder="All Dispositions" />
-              </SelectTrigger>
-              <SelectContent className="bg-[#1A1A1A] border-white/10">
-                <SelectItem value="all">All Dispositions</SelectItem>
-                <SelectItem value="Interested">Interested</SelectItem>
-                <SelectItem value="Semi-Interested">Semi-Interested</SelectItem>
-                <SelectItem value="Not Interested">Not Interested</SelectItem>
-                <SelectItem value="Busy">Busy</SelectItem>
-                <SelectItem value="Dropped">Dropped</SelectItem>
-                <SelectItem value="Incomplete conversation">Incomplete</SelectItem>
-              </SelectContent>
-            </Select>
-
-            {/* Search */}
-            <div className="relative flex-1 max-w-md">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#525252]" />
-              <Input
-                placeholder="Search by name or phone..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10 bg-[#1A1A1A] border-white/10 text-white placeholder:text-[#525252]"
+        {loading ? (
+          <CallTableSkeleton />
+        ) : (
+          <>
+            {/* Stats Cards */}
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-8">
+              <StatTile icon={PhoneCall} label="Total Calls" value={stats.total} tone="gold" />
+              <StatTile
+                icon={CheckCircle}
+                label="Completed"
+                value={stats.completed}
+                tone="emerald"
+                delay={0.05}
+              />
+              <StatTile
+                icon={User}
+                label="Interested"
+                value={stats.interested}
+                tone="blue"
+                delay={0.1}
+              />
+              <StatTile
+                icon={Sparkles}
+                label="Semi-Interested"
+                value={stats.semiInterested}
+                tone="cyan"
+                delay={0.15}
+              />
+              <StatTile
+                icon={Clock}
+                label="Avg Duration"
+                value={formatDuration(stats.avgDuration)}
+                tone="purple"
+                delay={0.2}
               />
             </div>
-          </div>
-        </motion.div>
 
-        {/* Call History Table */}
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          className="glass-card rounded-xl overflow-hidden"
-        >
-          <div className="p-4 border-b border-white/10">
-            <h2 className="text-lg font-semibold text-white">Call History</h2>
-            <p className="text-sm text-[#A3A3A3]">
-              {filteredCalls.length} calls found
-            </p>
-          </div>
-
-          <ScrollArea className="h-[500px]">
-            {/* Header row — CSS grid replaces <table> to avoid ve-dynamic span injection */}
-            <div className="grid grid-cols-7 gap-2 px-4 py-3 bg-[#1A1A1A] sticky top-0 border-b border-white/10">
-              {["Customer","Phone","Timestamp","Duration","Disposition","Status","Action"].map((h) => (
-                <span key={h} className="text-xs uppercase tracking-wider text-[#C5A059] font-semibold">{h}</span>
-              ))}
-            </div>
-
-            {/* Data rows */}
-            <div className="divide-y divide-white/5">
-              {loading ? (
-                <div className="px-4 py-8 text-center text-[#A3A3A3]">
-                  Loading call history...
+            {/* Batch Summary (AI Structured Extraction) */}
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+              className="glass-card rounded-xl p-5 mb-6"
+            >
+              <div className="flex items-center justify-between gap-4 flex-wrap">
+                <div>
+                  <h2 className="kicker">Batch Summary (AI Validated)</h2>
+                  <p className="text-xs text-[#A3A3A3] mt-1.5">
+                    Based on structured extraction from transcripts.{" "}
+                    {aiStats.total
+                      ? `${aiStats.total} calls analyzed.`
+                      : "No AI extractions yet for these filters."}
+                  </p>
                 </div>
-              ) : filteredCalls.length === 0 ? (
-                <div className="px-4 py-8 text-center text-[#A3A3A3]">
-                  No calls found
-                </div>
-              ) : (
-                filteredCalls.map((call, index) => (
+                {aiStats.incorrect > 0 && (
+                  <span className="text-xs px-2 py-1 rounded border border-red-500/30 bg-red-900/20 text-red-300">
+                    {aiStats.incorrect} system tags incorrect
+                  </span>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3 mt-4">
+                {aiBuckets.map((x) => (
                   <div
-                    key={call.id ? `${call.id}-${index}` : `idx-${index}`}
-                    className="grid grid-cols-7 gap-2 px-4 py-4 hover:bg-white/5 cursor-pointer transition-colors items-center"
-                    onClick={() => {
-                      setSelectedCall(call);
-                      setShowCallDetail(true);
-                      setIsPlaying(false);
-                      setAudioProgress(0);
+                    key={x.label}
+                    className="rounded-lg border border-white/10 bg-white/5 p-3 transition-colors duration-300 hover:border-[#C5A059]/30"
+                  >
+                    <p className="text-[10px] uppercase tracking-widest text-[#737373]">
+                      {x.label}
+                    </p>
+                    <p className="text-xl font-display text-white tabular-nums mt-1">
+                      {x.value}
+                    </p>
+                  </div>
+                ))}
+              </div>
+
+              {Array.isArray(aiBatchSummary?.top_priority_leads) &&
+                aiBatchSummary.top_priority_leads.length > 0 && (
+                  <div className="mt-4 pt-4 border-t border-white/10">
+                    <p className="kicker mb-2">Top priority leads to call first</p>
+                    <ul className="space-y-1 text-sm text-white">
+                      {aiBatchSummary.top_priority_leads.map((s) => (
+                        <li key={s} className="flex items-center gap-2">
+                          <span className="inline-block h-1.5 w-1.5 rounded-full bg-[#C5A059]" />
+                          <span className="break-all">{s}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+            </motion.div>
+
+            {/* Filters */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.3 }}
+              className="glass-card rounded-xl p-4 mb-6"
+            >
+              <div className="flex items-center gap-4 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <Filter className="w-4 h-4 text-[#C5A059]" />
+                  <Select value={selectedCampaign} onValueChange={setSelectedCampaign}>
+                    <SelectTrigger className="w-[200px] bg-[#1A1A1A] border-white/10 text-white">
+                      <SelectValue placeholder="All Campaigns" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-[#1A1A1A] border-white/10">
+                      <SelectItem value="all">All Campaigns</SelectItem>
+                      {campaigns.map((campaign) => (
+                        <SelectItem key={campaign} value={campaign}>
+                          {campaign}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <Select value={statusFilter} onValueChange={setStatusFilter}>
+                  <SelectTrigger className="w-[150px] bg-[#1A1A1A] border-white/10 text-white">
+                    <SelectValue placeholder="All Status" />
+                  </SelectTrigger>
+                  <SelectContent className="bg-[#1A1A1A] border-white/10">
+                    <SelectItem value="all">All Status</SelectItem>
+                    {statusList.map((s) => (
+                      <SelectItem key={s} value={s} className="capitalize">
+                        {s}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                <Select value={dispositionFilter} onValueChange={setDispositionFilter}>
+                  <SelectTrigger className="w-[180px] bg-[#1A1A1A] border-white/10 text-white">
+                    <SelectValue placeholder="All Dispositions" />
+                  </SelectTrigger>
+                  <SelectContent className="bg-[#1A1A1A] border-white/10">
+                    <SelectItem value="all">All Dispositions</SelectItem>
+                    {dispositionList.map((d) => (
+                      <SelectItem key={d} value={d}>
+                        {d}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                <div className="relative flex-1 max-w-md">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#525252]" />
+                  <Input
+                    placeholder="Search by name or phone..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="pl-10 bg-[#1A1A1A] border-white/10 text-white placeholder:text-[#525252] focus-visible:ring-[#C5A059]/40 focus-visible:border-[#C5A059]/40"
+                  />
+                </div>
+              </div>
+            </motion.div>
+
+            {/* Call History (Virtualized) */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.3 }}
+              className="glass-card rounded-xl overflow-hidden"
+            >
+              <div className="p-4 border-b border-white/10 flex items-center justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold text-white tracking-tight">
+                    Call History
+                  </h2>
+                  <p className="text-sm text-[#A3A3A3]">
+                    <span className="tabular-nums">{total.toLocaleString()}</span> calls
+                    found
+                    {calls.length < total ? (
+                      <span className="text-[#737373]">
+                        {" "}
+                        · showing{" "}
+                        <span className="tabular-nums">
+                          {calls.length.toLocaleString()}
+                        </span>{" "}
+                        loaded
+                      </span>
+                    ) : null}
+                  </p>
+                </div>
+              </div>
+
+              {/* Header row */}
+              <div className="grid grid-cols-7 gap-2 px-4 py-3 bg-[#141414] border-b border-white/10">
+                {["Customer", "Phone", "Timestamp", "Duration", "Disposition", "Status", "Action"].map(
+                  (h) => (
+                    <span
+                      key={h}
+                      className="text-[11px] uppercase tracking-widest text-[#C5A059] font-semibold"
+                    >
+                      {h}
+                    </span>
+                  )
+                )}
+              </div>
+
+              {/* Virtualized rows */}
+              {calls.length === 0 ? (
+                <EmptyState
+                  icon={PhoneOff}
+                  title="No calls match these filters"
+                  description="Adjust filters or wait for the next live batch."
+                  action={{ label: "Reset filters", onClick: handleResetFilters }}
+                />
+              ) : (
+                <div
+                  ref={scrollContainerRef}
+                  className="overflow-y-auto scrollbar-luxe"
+                  style={{ height: 500 }}
+                >
+                  <div
+                    style={{
+                      height: `${totalSize}px`,
+                      width: "100%",
+                      position: "relative",
                     }}
                   >
-                    {/* Customer */}
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#C5A059] to-[#8A6D3B] flex items-center justify-center text-black text-xs font-semibold flex-shrink-0">
-                        {call.customer_name ? call.customer_name.charAt(0).toUpperCase() : "?"}
-                      </div>
-                      <span className="text-white text-sm truncate">{call.customer_name || "Unknown"}</span>
-                    </div>
-
-                    {/* Phone */}
-                    <span className="text-[#A3A3A3] text-sm font-mono truncate">{call.phone || "N/A"}</span>
-
-                    {/* Timestamp */}
-                    <span className="text-[#A3A3A3] text-sm">{formatDate(call.created_at)}</span>
-
-                    {/* Duration */}
-                    <span className="text-[#C5A059] text-sm font-medium">{formatDuration(call.duration)}</span>
-
-                    {/* Disposition */}
-                    <div>
-                      {call.disposition && (
-                        <span className={`px-2 py-1 rounded text-xs border ${getDispositionBadge(call.disposition)}`}>
-                          {call.disposition}
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Status */}
-                    <div>
-                      <span className={`px-2 py-1 rounded text-xs flex items-center gap-1 w-fit ${getStatusBadge(call.status)}`}>
-                        {getStatusIcon(call.status)}
-                        {call.status}
-                      </span>
-                    </div>
-
-                    {/* Action */}
-                    <div>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="text-[#C5A059] hover:text-[#E5C585] hover:bg-[#C5A059]/10"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelectedCall(call);
-                          setShowCallDetail(true);
-                        }}
-                      >
-                        View Details
-                      </Button>
-                    </div>
+                    {virtualItems.map((virtualRow) => {
+                      const call = calls[virtualRow.index];
+                      return (
+                        <CallRow
+                          key={call.id ? `${call.id}-${virtualRow.index}` : `idx-${virtualRow.index}`}
+                          call={call}
+                          onSelect={handleSelectCall}
+                          style={{
+                            position: "absolute",
+                            top: 0,
+                            left: 0,
+                            width: "100%",
+                            transform: `translateY(${virtualRow.start}px)`,
+                          }}
+                        />
+                      );
+                    })}
                   </div>
-                ))
+                </div>
               )}
-            </div>
-          </ScrollArea>
-        </motion.div>
 
-        {/* Call Detail Dialog */}
+              {calls.length > 0 && hasMore && (
+                <div className="p-4 flex justify-center border-t border-white/10">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleLoadMore}
+                    disabled={loadingMore}
+                    className="border-[#C5A059]/40 text-[#C5A059] hover:bg-[#C5A059]/10 btn-tactile"
+                  >
+                    {loadingMore ? "Loading…" : "Load more"}
+                  </Button>
+                </div>
+              )}
+            </motion.div>
+          </>
+        )}
+
+        {/* Call Detail Dialog — restructured for proper containment */}
         <Dialog open={showCallDetail} onOpenChange={setShowCallDetail}>
-          <DialogContent className="bg-[#1A1A1A] border-white/10 max-w-3xl max-h-[90vh] overflow-hidden">
-            <DialogHeader>
-              <DialogTitle className="text-white flex items-center gap-3">
+          <DialogContent className="surface-elevated text-white max-w-3xl w-[calc(100vw-2rem)] h-[min(90vh,820px)] p-0 overflow-hidden flex flex-col gap-0">
+            {/* Fixed header */}
+            <DialogHeader className="px-6 pt-6 pb-4 border-b border-white/10 flex-shrink-0">
+              <DialogTitle className="text-white flex items-center gap-3 text-base">
                 <PhoneCall className="w-5 h-5 text-[#C5A059]" />
-                Call Details
-                <span className="text-[#A3A3A3] text-sm font-normal">
-                  | {selectedCall?.customer_name || "Unknown"}
+                <span>Call Details</span>
+                <span className="text-[#A3A3A3] text-sm font-normal truncate">
+                  · {selectedCall?.customer_name || "Unknown"}
                 </span>
               </DialogTitle>
             </DialogHeader>
 
+            {/* Single primary scroll body */}
             {selectedCall && (
-              <div className="space-y-6 overflow-y-auto max-h-[70vh] pr-2">
+              <div className="flex-1 min-h-0 overflow-y-auto scrollbar-luxe px-6 py-5 space-y-6">
                 {/* Call Summary */}
                 <div className="bg-white/5 rounded-lg p-4 border border-white/10">
-                  <h3 className="text-sm uppercase tracking-wider text-[#C5A059] mb-4 flex items-center gap-2">
+                  <h3 className="kicker mb-4 flex items-center gap-2">
                     <Phone className="w-4 h-4" />
                     Call Summary
                   </h3>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <div>
+                    <div className="min-w-0">
                       <p className="text-xs text-[#525252] mb-1">Status</p>
-                      <span className={`px-2 py-1 rounded text-xs inline-flex items-center gap-1 ${getStatusBadge(selectedCall.status)}`}>
-                        {getStatusIcon(selectedCall.status)}
-                        {selectedCall.status}
+                      <span
+                        className={`px-2 py-1 rounded text-xs inline-flex items-center gap-1 ${getStatusBadge(
+                          selectedCall.status
+                        )}`}
+                      >
+                        <StatusIcon status={selectedCall.status} />
+                        <span className="capitalize">{selectedCall.status}</span>
                       </span>
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <p className="text-xs text-[#525252] mb-1">Duration</p>
-                      <p className="text-[#C5A059] font-medium">
+                      <p className="text-[#C5A059] font-medium tabular-nums">
                         {formatDuration(selectedCall.duration)}
                       </p>
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <p className="text-xs text-[#525252] mb-1">Disposition</p>
                       {selectedCall.disposition ? (
-                        <span className={`px-2 py-1 rounded text-xs border ${getDispositionBadge(selectedCall.disposition)}`}>
+                        <span
+                          className={`px-2 py-1 rounded text-xs border inline-block truncate max-w-full ${getDispositionBadge(
+                            selectedCall.disposition
+                          )}`}
+                        >
                           {selectedCall.disposition}
                         </span>
                       ) : (
                         <p className="text-[#A3A3A3]">N/A</p>
                       )}
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <p className="text-xs text-[#525252] mb-1">Call Date</p>
-                      <p className="text-white text-sm">
+                      <p className="text-white text-sm tabular-nums truncate">
                         {formatDate(selectedCall.created_at)}
                       </p>
                     </div>
@@ -592,18 +866,24 @@ const AICallingPage = ({ onLogout, currentUser }) => {
                     <Button
                       data-testid="mark-interested-btn"
                       size="sm"
-                      disabled={selectedCall.disposition === "Interested" || updatingDisposition}
+                      disabled={
+                        selectedCall.disposition === "Interested" ||
+                        updatingDisposition
+                      }
                       onClick={() => updateDisposition(selectedCall, "Interested")}
-                      className="bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-40"
+                      className="bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-40 btn-tactile"
                     >
                       {updatingDisposition ? "..." : "Mark Interested"}
                     </Button>
                     <Button
                       data-testid="mark-not-interested-btn"
                       size="sm"
-                      disabled={selectedCall.disposition === "Not Interested" || updatingDisposition}
+                      disabled={
+                        selectedCall.disposition === "Not Interested" ||
+                        updatingDisposition
+                      }
                       onClick={() => updateDisposition(selectedCall, "Not Interested")}
-                      className="bg-red-700 hover:bg-red-600 text-white disabled:opacity-40"
+                      className="bg-red-700 hover:bg-red-600 text-white disabled:opacity-40 btn-tactile"
                     >
                       {updatingDisposition ? "..." : "Mark Not Interested"}
                     </Button>
@@ -613,7 +893,7 @@ const AICallingPage = ({ onLogout, currentUser }) => {
                 {/* Audio Player */}
                 {selectedCall.recording_url && (
                   <div className="bg-white/5 rounded-lg p-4 border border-white/10">
-                    <h3 className="text-sm uppercase tracking-wider text-[#C5A059] mb-4 flex items-center gap-2">
+                    <h3 className="kicker mb-4 flex items-center gap-2">
                       <Play className="w-4 h-4" />
                       Call Recording
                     </h3>
@@ -621,7 +901,7 @@ const AICallingPage = ({ onLogout, currentUser }) => {
                       <Button
                         size="icon"
                         onClick={handlePlayPause}
-                        className="w-12 h-12 rounded-full bg-[#C5A059] hover:bg-[#E5C585] text-black"
+                        className="w-12 h-12 rounded-full bg-[#C5A059] hover:bg-[#E5C585] text-black btn-tactile flex-shrink-0"
                       >
                         {isPlaying ? (
                           <Pause className="w-5 h-5" />
@@ -629,28 +909,30 @@ const AICallingPage = ({ onLogout, currentUser }) => {
                           <Play className="w-5 h-5 ml-1" />
                         )}
                       </Button>
-                      
-                      <div className="flex-1">
+
+                      <div className="flex-1 min-w-0">
                         <div
-                          className="h-2 bg-white/10 rounded-full cursor-pointer"
+                          className="h-2 bg-white/10 rounded-full cursor-pointer relative overflow-hidden"
                           onClick={handleSeek}
                         >
                           <div
-                            className="h-full bg-[#C5A059] rounded-full"
-                            style={{ width: `${(audioProgress / audioDuration) * 100 || 0}%` }}
+                            className="absolute inset-y-0 left-0 bg-gradient-to-r from-[#C5A059] to-[#E5C585] rounded-full transition-all duration-150"
+                            style={{
+                              width: `${(audioProgress / audioDuration) * 100 || 0}%`,
+                            }}
                           />
                         </div>
                         <div className="flex justify-between mt-1">
-                          <span className="text-xs text-[#A3A3A3]">
+                          <span className="text-xs text-[#A3A3A3] tabular-nums">
                             {formatDuration(Math.floor(audioProgress))}
                           </span>
-                          <span className="text-xs text-[#A3A3A3]">
+                          <span className="text-xs text-[#A3A3A3] tabular-nums">
                             {formatDuration(Math.floor(audioDuration))}
                           </span>
                         </div>
                       </div>
                     </div>
-                    
+
                     <audio
                       ref={audioRef}
                       src={selectedCall.recording_url}
@@ -662,79 +944,105 @@ const AICallingPage = ({ onLogout, currentUser }) => {
                 )}
 
                 {/* Tabs for Details and Transcript */}
-                <Tabs defaultValue="details" className="w-full">
-                  <TabsList className="bg-white/5 border border-white/10">
-                    <TabsTrigger value="details" className="data-[state=active]:bg-[#C5A059] data-[state=active]:text-black">
+                <Tabs defaultValue="details" className="w-full flex flex-col min-h-0">
+                  <TabsList className="bg-white/5 border border-white/10 flex-shrink-0">
+                    <TabsTrigger
+                      value="details"
+                      className="data-[state=active]:bg-[#C5A059] data-[state=active]:text-black transition-all duration-300"
+                    >
                       Details
                     </TabsTrigger>
-                    <TabsTrigger value="transcript" className="data-[state=active]:bg-[#C5A059] data-[state=active]:text-black">
+                    <TabsTrigger
+                      value="transcript"
+                      className="data-[state=active]:bg-[#C5A059] data-[state=active]:text-black transition-all duration-300"
+                    >
                       Transcript
                     </TabsTrigger>
                   </TabsList>
-                  
+
                   <TabsContent value="details" className="mt-4">
                     <div className="bg-white/5 rounded-lg p-4 border border-white/10">
                       <div className="grid grid-cols-2 gap-4">
-                        <div>
+                        <div className="min-w-0">
                           <p className="text-xs text-[#525252] mb-1">Phone Number</p>
-                          <p className="text-white font-mono">{selectedCall.phone || "N/A"}</p>
+                          <p className="text-white font-mono tabular-nums truncate">
+                            {selectedCall.phone || "N/A"}
+                          </p>
                         </div>
-                        <div>
+                        <div className="min-w-0">
                           <p className="text-xs text-[#525252] mb-1">Customer Name</p>
-                          <p className="text-white">{selectedCall.customer_name || "Unknown"}</p>
+                          <p className="text-white truncate">
+                            {selectedCall.customer_name || "Unknown"}
+                          </p>
                         </div>
-                        <div>
+                        <div className="min-w-0">
                           <p className="text-xs text-[#525252] mb-1">Lead ID</p>
-                          <p className="text-white font-mono text-sm">{selectedCall.lead_id || "N/A"}</p>
+                          <p className="text-white font-mono text-sm truncate">
+                            {selectedCall.lead_id || "N/A"}
+                          </p>
                         </div>
-                        <div>
+                        <div className="min-w-0">
                           <p className="text-xs text-[#525252] mb-1">Campaign</p>
-                          <p className="text-white">{selectedCall.campaign || "N/A"}</p>
+                          <p className="text-white truncate">
+                            {selectedCall.campaign || "N/A"}
+                          </p>
                         </div>
-                        <div>
+                        <div className="min-w-0">
                           <p className="text-xs text-[#525252] mb-1">Direction</p>
-                          <p className="text-white capitalize">{selectedCall.direction || "Outbound"}</p>
+                          <p className="text-white capitalize">
+                            {selectedCall.direction || "Outbound"}
+                          </p>
                         </div>
-                        <div>
+                        <div className="min-w-0">
                           <p className="text-xs text-[#525252] mb-1">Hangup By</p>
-                          <p className="text-white capitalize">{selectedCall.hangup_by || "N/A"}</p>
+                          <p className="text-white capitalize">
+                            {selectedCall.hangup_by || "N/A"}
+                          </p>
                         </div>
                       </div>
                     </div>
                   </TabsContent>
-                  
-                  <TabsContent value="transcript" className="mt-4">
-                    <div className="bg-white/5 rounded-lg p-4 border border-white/10">
-                      <h4 className="text-sm text-[#C5A059] mb-4 flex items-center gap-2">
+
+                  <TabsContent value="transcript" className="mt-4 flex-1 min-h-0">
+                    <div className="bg-white/5 rounded-lg p-4 border border-white/10 flex flex-col min-h-0">
+                      <h4 className="kicker mb-4 flex items-center gap-2 flex-shrink-0">
                         <FileText className="w-4 h-4" />
                         Call Transcript
                       </h4>
                       {selectedCall.transcript ? (
-                        <ScrollArea className="h-[300px]">
-                          <div className="space-y-3">
-                            {selectedCall.transcript.split('\n').map((line, idx) => {
-                              const isAgent = line.toLowerCase().startsWith('assistant:') || line.toLowerCase().startsWith('ai:');
-                              const isUser = line.toLowerCase().startsWith('user:') || line.toLowerCase().startsWith('customer:');
-                              const cleanLine = line.replace(/^(assistant|user|ai|customer):/i, '').trim();
-                              
+                        <ScrollArea className="flex-1 min-h-0 max-h-[40vh]">
+                          <div className="space-y-3 pr-3">
+                            {selectedCall.transcript.split("\n").map((line, idx) => {
+                              const isAgent =
+                                line.toLowerCase().startsWith("assistant:") ||
+                                line.toLowerCase().startsWith("ai:");
+                              const isUser =
+                                line.toLowerCase().startsWith("user:") ||
+                                line.toLowerCase().startsWith("customer:");
+                              const cleanLine = line
+                                .replace(/^(assistant|user|ai|customer):/i, "")
+                                .trim();
+
                               if (!cleanLine) return null;
-                              
+
                               return (
                                 <div
                                   key={idx}
-                                  className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}
+                                  className={`flex ${
+                                    isUser ? "justify-end" : "justify-start"
+                                  }`}
                                 >
                                   <div
                                     className={`max-w-[80%] rounded-lg px-4 py-2 ${
                                       isUser
-                                        ? 'bg-white/10 text-white'
-                                        : 'bg-[#C5A059]/20 text-[#C5A059]'
+                                        ? "bg-white/10 text-white"
+                                        : "bg-[#C5A059]/15 text-[#F2D9A8] border border-[#C5A059]/20"
                                     }`}
                                   >
                                     <p className="text-xs mb-1 opacity-70">
-                                      {isUser ? 'Customer' : 'AI Agent'}
+                                      {isUser ? "Customer" : "AI Agent"}
                                     </p>
-                                    <p className="text-sm">{cleanLine}</p>
+                                    <p className="text-sm leading-relaxed">{cleanLine}</p>
                                   </div>
                                 </div>
                               );
@@ -757,15 +1065,5 @@ const AICallingPage = ({ onLogout, currentUser }) => {
     </div>
   );
 };
-
-// Render call rows directly inside the table tbody. The tbody carries
-// x-excluded="true" so the visual-edits babel plugin does NOT wrap the
-// dynamic .map() expression with <span data-ve-dynamic>; that wrapper would
-// otherwise become an invalid child of <tbody>, get hoisted out by the
-// browser parser, and break React's row reconciliation on filter changes.
-//
-// Reference: /app/frontend/plugins/visual-edits/babel-metadata-plugin.js
-// line ~1719 — children-wrapping is skipped when x-excluded or
-// data-ve-dynamic is present on the opening element.
 
 export default AICallingPage;

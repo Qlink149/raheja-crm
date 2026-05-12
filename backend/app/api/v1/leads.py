@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, Query, HTTPException, UploadFile, File
 from typing import List, Optional
 import logging
+import re
 import uuid
 import pandas as pd
 import io
@@ -25,6 +26,7 @@ async def list_leads(
     location_category: Optional[str] = None,
     intent_category: Optional[str] = None,
     temperature: Optional[str] = None,
+    qualification_category: Optional[str] = None,
     project: Optional[str] = None,
     vip_only: bool = False,
     campaign_id: Optional[str] = None,
@@ -37,6 +39,7 @@ async def list_leads(
         "location_category": location_category,
         "intent_category": intent_category,
         "temperature": temperature,
+        "qualification_category": qualification_category,
         "project": project
     }
     if vip_only:
@@ -45,6 +48,10 @@ async def list_leads(
         filters["campaign_id"] = campaign_id
     if futwork_sync_status:
         filters["futwork_sync_status"] = futwork_sync_status
+    else:
+        # Show all leads except those explicitly marked as failed
+        # ($not/$eq also matches documents where the field is absent)
+        filters["futwork_sync_status"] = {"$not": {"$eq": "failed"}}
 
     return await service.get_leads(skip, limit, search, filters)
 
@@ -55,6 +62,7 @@ async def get_leads_count(
     location_category: Optional[str] = None,
     intent_category: Optional[str] = None,
     temperature: Optional[str] = None,
+    qualification_category: Optional[str] = None,
     project: Optional[str] = None,
     vip_only: bool = False,
     search: Optional[str] = None,
@@ -62,33 +70,26 @@ async def get_leads_count(
     futwork_sync_status: Optional[str] = None,
     db = Depends(get_db)
 ):
-    import re
-    query = {}
-    if budget_category and budget_category != "all": query["budget_category"] = budget_category
-    if location_category and location_category != "all": query["location_category"] = location_category
-    if intent_category and intent_category != "all": query["intent_category"] = intent_category
-    if temperature and temperature != "all": query["temperature"] = temperature
-    if project and project != "all": query["project"] = project
-    if vip_only: query["is_vip"] = True
+    service = LeadService(db)
+    filters = {
+        "budget_category": budget_category,
+        "location_category": location_category,
+        "intent_category": intent_category,
+        "temperature": temperature,
+        "qualification_category": qualification_category,
+        "project": project,
+    }
+    if vip_only:
+        filters["is_vip"] = True
     if campaign_id:
-        query["campaign_id"] = campaign_id
+        filters["campaign_id"] = campaign_id
     if futwork_sync_status:
-        query["futwork_sync_status"] = futwork_sync_status
+        filters["futwork_sync_status"] = futwork_sync_status
+    else:
+        # Show all leads except those explicitly marked as failed
+        filters["futwork_sync_status"] = {"$not": {"$eq": "failed"}}
 
-    if search:
-        esc = re.escape(search)
-        digits = re.sub(r"\D+", "", search)
-        ors = [
-            {'full_name': {'$regex': esc, '$options': 'i'}},
-            {'mobile': {'$regex': esc, '$options': 'i'}},
-        ]
-        if digits:
-            ors.append({'mobile_digits': {'$regex': digits}})
-            if len(digits) > 10:
-                ors.append({'mobile_digits': {'$regex': digits[-10:]}})
-        query['$or'] = ors
-
-    count = await db.leads.count_documents(query)
+    count = await service.count_leads(search, filters)
     return {"count": count}
 
 
@@ -107,6 +108,12 @@ async def get_lead(lead_id: str, db = Depends(get_db)):
     lead = await service.get_lead_by_id(lead_id)
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
+    # Repair alias field for frontend compatibility (non-destructive)
+    try:
+        await service.ensure_residential_alias(lead_id)
+        lead = await service.get_lead_by_id(lead_id) or lead
+    except Exception:
+        logger.exception("Failed to ensure residential alias | lead_id=%s", lead_id)
     return lead
 
 
@@ -131,15 +138,24 @@ async def get_lead_calls(lead_id: str, db = Depends(get_db)):
         ).sort("created_at", -1).to_list(50)
 
         for d in history_docs:
+            se = d.get("structured_extraction") or {}
+            ai_summary = ""
+            if isinstance(se, dict) and se.get("call_summary"):
+                ai_summary = str(se.get("call_summary"))
+            elif d.get("extracted_data"):
+                ai_summary = (d.get("extracted_data") or {}).get("call_summary", "") or ""
             calls.append({
                 "lead_id": lead_id,
+                "call_sid": d.get("id") or d.get("call_sid") or "",
+                "created_at": d.get("created_at") or d.get("started_at") or "",
                 "call_date": d.get("started_at", d.get("created_at", "")),
                 "status": d.get("status", ""),
                 "disposition": d.get("disposition", ""),
                 "duration": int(d.get("duration", 0) or 0),
                 "recording_url": d.get("recording_url", ""),
                 "transcript": d.get("transcript", ""),
-                "ai_call_summary": d.get("ai_call_summary", ""),
+                "ai_call_summary": ai_summary,
+                "ai_worthy": d.get("ai_worthy") is not False,
                 "campaign": d.get("campaign", ""),
             })
 
@@ -162,6 +178,8 @@ async def get_lead_calls(lead_id: str, db = Depends(get_db)):
                 continue
             calls.append({
                 "lead_id": d.get("id", lead_id),
+                "call_sid": "",
+                "created_at": d.get("created_at") or d.get("call_date") or "",
                 "call_date": d.get("call_date", d.get("created_at", "")),
                 "status": d.get("call_status", ""),
                 "disposition": d.get("disposition", ""),
@@ -169,16 +187,23 @@ async def get_lead_calls(lead_id: str, db = Depends(get_db)):
                 "recording_url": d.get("recording_url", ""),
                 "transcript": d.get("transcript", ""),
                 "ai_call_summary": d.get("lastCallSummary", ""),
+                "ai_worthy": True,
                 "campaign": d.get("campaign_name", ""),
             })
 
     return {"calls": calls}
 
 
+def _default_batch_name(filename: Optional[str]) -> str:
+    base = (filename or "upload.csv").rsplit(".", 1)[0].strip() or "upload"
+    return base[:200]
+
+
 @router.post("/upload")
 async def upload_leads(
     file: UploadFile = File(...),
-    push_to_futwork: bool = Query(False),
+    batch_name: Optional[str] = Query(None),
+    push_to_futwork: bool = Query(True),
     db = Depends(get_db),
 ):
     if not file.filename or not file.filename.lower().endswith(".csv"):
@@ -197,6 +222,36 @@ async def upload_leads(
         )
     if not content:
         raise HTTPException(status_code=400, detail="Uploaded CSV is empty")
+
+    upload_id = str(uuid.uuid4())
+    resolved_batch = (batch_name or "").strip() or _default_batch_name(file.filename)
+    resolved_batch = re.sub(r"\s+", " ", resolved_batch).strip()[:200]
+
+    # ---- Cloudinary raw upload (required when configured) -----------------
+    original_csv_secure_url = ""
+    original_csv_public_id = ""
+    try:
+        from ...utils.cloudinary_csv import upload_lead_csv_raw
+
+        upload_result = await upload_lead_csv_raw(
+            content,
+            batch_label=resolved_batch,
+            upload_id=upload_id,
+        )
+        original_csv_secure_url = str(upload_result.get("secure_url") or "")
+        original_csv_public_id = str(upload_result.get("public_id") or "")
+    except RuntimeError as e:
+        logger.error("CSV storage unavailable: %s", e)
+        raise HTTPException(
+            status_code=503,
+            detail="CSV storage is not configured. Set CLOUDINARY_URL on the server.",
+        )
+    except Exception as e:
+        logger.exception("Cloudinary upload failed")
+        raise HTTPException(
+            status_code=503,
+            detail=f"Could not store CSV file: {e!s}",
+        )
 
     # ---- Parse with encoding fallback --------------------------------------
     try:
@@ -226,8 +281,6 @@ async def upload_leads(
     failed_rows   = result.get("failed_rows", []) or []
     unprocessed   = len(failed_rows)
 
-    upload_id = str(uuid.uuid4())
-
     # ---- Persist failed rows (chunked) so they're downloadable -------------
     if failed_rows:
         try:
@@ -253,26 +306,14 @@ async def upload_leads(
                 len(failed_rows),
             )
 
-    # ---- History summary ---------------------------------------------------
-    history_doc = {
-        "id": upload_id,
-        "created_at": datetime.utcnow(),
-        "filename": file.filename or "upload.csv",
-        "processed": processed,
-        "new_leads": new_count,
-        "updated_leads": updated_count,
-        "unprocessed": unprocessed,
-        "row_count": row_count,
-        "csv_headers": [str(c) for c in df.columns.tolist()],
-    }
-    try:
-        await db.lead_upload_history.insert_one(history_doc)
-    except Exception:
-        logger.exception(
-            "Failed to record lead_upload_history | upload_id=%s", upload_id
-        )
-
+    pushed_count = 0
+    failed_count = 0
     if push_to_futwork:
+        if not (settings.FUTWORK_API_KEY or "").strip() or not (settings.FUTWORK_CAMPAIGN_ID or "").strip():
+            raise HTTPException(
+                status_code=503,
+                detail="Futwork is not configured on the server (missing FUTWORK_API_KEY / FUTWORK_CAMPAIGN_ID).",
+            )
         from ...utils.csv_processor import process_row_to_lead
         processed_leads = [process_row_to_lead(row) for row in rows]
         upload_campaign_id = None
@@ -285,11 +326,36 @@ async def upload_leads(
             logger.exception(
                 "upload_leads: failed to resolve campaign for Futwork tagging",
             )
-        pushed = await service.push_to_futwork(
+        pushed_count, failed_count = await service.push_to_futwork(
             processed_leads,
             campaign_id=upload_campaign_id,
         )
-        result["futwork_pushed"] = pushed
+        result["futwork_pushed"] = pushed_count
+        result["futwork_failed"] = failed_count
+
+    # ---- History summary ---------------------------------------------------
+    history_doc = {
+        "id": upload_id,
+        "created_at": datetime.utcnow(),
+        "filename": file.filename or "upload.csv",
+        "batch_name": resolved_batch,
+        "original_csv_secure_url": original_csv_secure_url,
+        "original_csv_public_id": original_csv_public_id,
+        "processed": processed,
+        "new_leads": new_count,
+        "updated_leads": updated_count,
+        "unprocessed": unprocessed,
+        "row_count": row_count,
+        "csv_headers": [str(c) for c in df.columns.tolist()],
+        "futwork_pushed": pushed_count if push_to_futwork else 0,
+        "futwork_failed": failed_count if push_to_futwork else 0,
+    }
+    try:
+        await db.lead_upload_history.insert_one(history_doc)
+    except Exception:
+        logger.exception(
+            "Failed to record lead_upload_history | upload_id=%s", upload_id
+        )
 
     return {
         "upload_id": upload_id,
@@ -299,6 +365,8 @@ async def upload_leads(
         "processed": processed,
         "unprocessed": unprocessed,
         "row_count": row_count,
+        "futwork_pushed": pushed_count if push_to_futwork else 0,
+        "futwork_failed": failed_count if push_to_futwork else 0,
     }
 
 

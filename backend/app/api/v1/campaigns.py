@@ -1,14 +1,20 @@
 import csv
 import io
 import logging
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, RedirectResponse
 
 from ...core.config import settings
 from ...core.database import get_db
-from ...models.campaign import CampaignCreate, CampaignCurrentResponse, LeadUploadHistoryEntry
+from ...models.campaign import (
+    CampaignCreate,
+    CampaignCurrentResponse,
+    LeadUploadBatchRename,
+    LeadUploadHistoryEntry,
+)
 from ...services.campaign_service import CampaignService
 
 logger = logging.getLogger(__name__)
@@ -128,6 +134,99 @@ async def download_unprocessed_csv(upload_id: str, db=Depends(get_db)):
     )
 
 
+@router.patch("/current/upload-history/{upload_id}")
+async def rename_lead_upload_batch(
+    upload_id: str,
+    body: LeadUploadBatchRename,
+    db=Depends(get_db),
+):
+    if not (settings.FUTWORK_CAMPAIGN_ID or "").strip():
+        raise HTTPException(
+            status_code=503,
+            detail="FUTWORK_CAMPAIGN_ID is not configured on the server",
+        )
+    name = body.batch_name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="batch_name is required")
+    result = await db.lead_upload_history.update_one(
+        {"id": upload_id},
+        {"$set": {"batch_name": name[:200]}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Upload not found")
+    return {"success": True, "id": upload_id, "batch_name": name[:200]}
+
+
+@router.get("/current/upload-history/{upload_id}/details")
+async def get_lead_upload_details(upload_id: str, db=Depends(get_db)):
+    if not (settings.FUTWORK_CAMPAIGN_ID or "").strip():
+        raise HTTPException(
+            status_code=503,
+            detail="FUTWORK_CAMPAIGN_ID is not configured on the server",
+        )
+    doc = await db.lead_upload_history.find_one({"id": upload_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Upload not found")
+
+    failures_n = await db.lead_upload_failures.count_documents({"upload_id": upload_id})
+    return {
+        "id": doc.get("id"),
+        "batch_name": doc.get("batch_name") or "",
+        "filename": doc.get("filename") or "",
+        "created_at": doc.get("created_at"),
+        "processed": doc.get("processed", 0),
+        "new_leads": doc.get("new_leads", 0),
+        "updated_leads": doc.get("updated_leads", 0),
+        "unprocessed": doc.get("unprocessed", 0),
+        "row_count": doc.get("row_count", 0),
+        "csv_headers": doc.get("csv_headers") or [],
+        "original_csv_secure_url": doc.get("original_csv_secure_url") or "",
+        "original_csv_public_id": doc.get("original_csv_public_id") or "",
+        "futwork_pushed": doc.get("futwork_pushed", 0),
+        "futwork_failed": doc.get("futwork_failed", 0),
+        "has_unprocessed_csv": failures_n > 0,
+    }
+
+
+@router.get("/current/upload-history/{upload_id}/download-original")
+async def download_original_upload_csv(upload_id: str, db=Depends(get_db)):
+    if not (settings.FUTWORK_CAMPAIGN_ID or "").strip():
+        raise HTTPException(
+            status_code=503,
+            detail="FUTWORK_CAMPAIGN_ID is not configured on the server",
+        )
+    doc = await db.lead_upload_history.find_one({"id": upload_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Upload not found")
+    url = (doc.get("original_csv_secure_url") or "").strip()
+    if not url:
+        raise HTTPException(
+            status_code=404,
+            detail="Original CSV is not available for this upload",
+        )
+
+    batch_name = (doc.get("batch_name") or "").strip() or "upload"
+    safe_base = "".join(c if (c.isalnum() or c in "._-") else "_" for c in batch_name)
+    safe_base = safe_base.strip("._-") or "upload"
+    filename = safe_base if safe_base.lower().endswith(".csv") else f"{safe_base}.csv"
+
+    async def _iter_bytes():
+        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+            resp = await client.get(url)
+            if resp.status_code != 200:
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Failed to fetch original CSV from storage (status={resp.status_code})",
+                )
+            yield resp.content
+
+    return StreamingResponse(
+        _iter_bytes(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.get("", response_model=List[Any])
 async def list_campaigns(db=Depends(get_db)):
     service = CampaignService(db)
@@ -157,17 +256,32 @@ async def get_audience_count(
     vip_only: bool = False,
     db=Depends(get_db),
 ):
-    query = {}
+    parts: List[Dict[str, Any]] = []
     if budget and budget != "all":
-        query["budget_category"] = budget
+        parts.append({"budget_category": budget})
     if location and location != "all":
-        query["location_category"] = location
+        parts.append({"location_category": location})
     if temperature and temperature != "all":
-        query["temperature"] = temperature
+        parts.append({"temperature": temperature})
     if project and project != "all":
-        query["project"] = project
+        parts.append({"project": project})
     if vip_only:
-        query["is_vip"] = True
+        parts.append(
+            {
+                "$or": [
+                    {"is_vip": True},
+                    {"temperature": "Hot"},
+                    {"budget_category": {"$in": ["5 Cr+", "2-5 Cr"]}},
+                ]
+            }
+        )
+
+    if not parts:
+        query: Dict[str, Any] = {}
+    elif len(parts) == 1:
+        query = parts[0]
+    else:
+        query = {"$and": parts}
 
     count = await db.leads.count_documents(query)
     return {"count": count}
@@ -211,10 +325,17 @@ async def get_campaign_calls(campaign_id: str, db=Depends(get_db)):
     else:
         call_query = {"campaign": campaign_name}
 
-    calls = await db.call_history.find(
+    calls_cursor = await db.call_history.find(
         call_query,
         {"_id": 0},
     ).sort("created_at", -1).to_list(length=500)
+
+    calls = []
+    for d in calls_cursor:
+        call_obj = dict(d)
+        # Extract summary from webhook payload
+        call_obj["ai_call_summary"] = d.get("extracted_data", {}).get("call_summary", "")
+        calls.append(call_obj)
 
     # If no calls in call_history, check leads collection
     if not calls:

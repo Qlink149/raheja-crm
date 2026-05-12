@@ -15,6 +15,7 @@ import {
   DialogTitle,
 } from "./ui/dialog";
 import { Button } from "./ui/button";
+import { Input } from "./ui/input";
 
 const TEMPLATE_HEADERS = [
   { key: "recipientPhoneNumber", required: true },
@@ -39,13 +40,12 @@ const UploadLeadsModal = ({
   onSubmit,
   uploading = false,
   maxMb = 10,
-  canPushToFutwork = false,
 }) => {
   const inputRef = useRef(null);
   const [file, setFile] = useState(null);
   const [dragOver, setDragOver] = useState(false);
   const [error, setError] = useState("");
-  const [pushToFutwork, setPushToFutwork] = useState(false);
+  const [batchName, setBatchName] = useState("");
 
   const validate = (f) => {
     if (!f) return "No file selected";
@@ -63,6 +63,11 @@ const UploadLeadsModal = ({
     }
     setError("");
     setFile(f);
+    setBatchName((prev) => {
+      if ((prev || "").trim()) return prev;
+      const stem = (f.name || "").replace(/\.csv$/i, "").trim();
+      return stem.slice(0, 200);
+    });
   };
 
   const handleBrowse = () => inputRef.current?.click();
@@ -104,15 +109,16 @@ const UploadLeadsModal = ({
   const clearFile = () => {
     setFile(null);
     setError("");
+    setBatchName("");
     if (inputRef.current) inputRef.current.value = "";
   };
 
   const handleUpload = async () => {
     if (!file || uploading) return;
     try {
-      await onSubmit(file, { pushToFutwork: canPushToFutwork && pushToFutwork });
+      await onSubmit(file, { batchName: batchName.trim() });
       clearFile();
-      setPushToFutwork(false);
+      setBatchName("");
       onOpenChange(false);
     } catch {
       // parent already toasted; keep modal open so the user can retry
@@ -124,7 +130,7 @@ const UploadLeadsModal = ({
     if (!next) {
       setFile(null);
       setError("");
-      setPushToFutwork(false);
+      setBatchName("");
       if (inputRef.current) inputRef.current.value = "";
     }
     onOpenChange(next);
@@ -154,6 +160,22 @@ const UploadLeadsModal = ({
         <div className="px-6 pb-6 space-y-5">
           <div className="border-b border-white/10 pb-3">
             <p className="text-sm font-medium text-white/90">Campaign Details</p>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-xs uppercase tracking-wider text-[#C5A059] font-semibold">
+              Batch name
+            </label>
+            <Input
+              value={batchName}
+              onChange={(e) => setBatchName(e.target.value.slice(0, 200))}
+              placeholder="e.g. February inbound"
+              disabled={uploading}
+              className="bg-black/30 border-white/10 text-white placeholder:text-[#525252]"
+            />
+            <p className="text-xs text-[#737373]">
+              Used in upload history; defaults to your CSV file name.
+            </p>
           </div>
 
           {/* Drop zone */}
@@ -240,25 +262,6 @@ const UploadLeadsModal = ({
               onChange={handleInputChange}
             />
           </div>
-
-          {/* Optional: also push to Futwork dialer right after ingest */}
-          {canPushToFutwork && (
-            <label className="flex items-start gap-3 rounded-lg border border-white/10 bg-white/[0.02] p-3 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={pushToFutwork}
-                onChange={(e) => setPushToFutwork(e.target.checked)}
-                disabled={uploading}
-                className="mt-1 h-4 w-4 rounded border-white/20 bg-white/5 accent-emerald-500 disabled:opacity-50"
-              />
-              <span className="text-sm text-[#A3A3A3]">
-                <span className="text-white">Also push to Futwork dialer</span>
-                <span className="block text-xs text-[#737373] mt-0.5">
-                  Sends each ingested row to your configured Futwork campaign so calls can start immediately.
-                </span>
-              </span>
-            </label>
-          )}
 
           {/* CSV Template Preview */}
           <div className="rounded-lg border border-white/10 bg-white/[0.02] p-4">

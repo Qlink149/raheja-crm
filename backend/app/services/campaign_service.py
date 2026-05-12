@@ -35,7 +35,7 @@ def resolve_agent_name(agent_id: str) -> str:
     if mapped:
         return mapped
     if len(agent_id) >= 8 and all(c in "0123456789abcdefABCDEF" for c in agent_id):
-        return f"Futwork Agent ({agent_id[:6]}…{agent_id[-4:]})"
+        return f"Clara Agent ({agent_id[:6]}…{agent_id[-4:]})"
     return agent_id
 
 class CampaignService:

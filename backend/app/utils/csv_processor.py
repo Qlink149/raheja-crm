@@ -1,7 +1,7 @@
 import re
 import hashlib
 from datetime import datetime
-from typing import Dict, Any
+from typing import Dict, Any, Tuple, Optional
 
 # Column mappings from CSV headers to internal DB field names
 COLUMN_MAPPINGS = {
@@ -125,6 +125,19 @@ def process_row_to_lead(row: Dict[str, Any]) -> Dict[str, Any]:
     # Always set current_residential_location as alias (frontend reads this variant)
     lead['current_residential_location'] = lead.get('current_residence_location', '')
 
+    # Optional baseline preservation (baseline = CSV upload)
+    # These are useful to compare against AI-refined fields later.
+    # Keep them lightweight and only set when present.
+    if lead.get("budget"):
+        lead["baseline_budget"] = lead.get("budget", "")
+    if lead.get("location"):
+        lead["baseline_location"] = lead.get("location", "")
+    if lead.get("configuration"):
+        lead["baseline_configuration"] = lead.get("configuration", "")
+    if lead.get("source"):
+        lead["baseline_source"] = lead.get("source", "")
+    lead["baseline_uploaded_at"] = datetime.utcnow()
+
     # Derived flags
     lead['is_vip'] = (
         lead.get('temperature') == 'Hot' or
@@ -138,4 +151,176 @@ def process_row_to_lead(row: Dict[str, Any]) -> Dict[str, Any]:
     # Metadata
     lead['updated_at'] = datetime.utcnow()
 
+    # Guarantee: these fields must always exist and never be None in the DB.
+    # This protects against CSV uploads that are missing source columns
+    # (e.g. Futwork call reports that lack Budget / Location / Intent columns).
+    for field in (
+        'budget_category', 'location_category', 'intent_category',
+        'vip_category', 'project', 'temperature', 'status', 'disposition',
+    ):
+        if lead.get(field) is None:
+            lead[field] = ""
+
     return lead
+
+
+def _parse_iso_datetime(raw: Any) -> Optional[datetime]:
+    """
+    Parse Futwork ISO strings like '2026-05-08T20:25:23.674Z' into datetime.
+    Returns None on invalid input.
+    """
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if not s:
+        return None
+    try:
+        # Handle trailing 'Z'
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        return datetime.fromisoformat(s)
+    except Exception:
+        return None
+
+
+def process_call_report_row_to_call_history_and_lead_patches(
+    row: Dict[str, Any],
+) -> Tuple[Dict[str, Any], Dict[str, Any], str]:
+    """
+    Curated mapping for Futwork unmasked call report CSV rows.
+
+    Returns:
+      (call_history_set_fields, lead_set_fields, call_sid)
+
+    Rule: only include customer-useful fields; do not persist internal/system columns
+    unless they are required to correlate and analyze calls.
+    """
+    r = row or {}
+    call_sid = str(r.get("callSid") or "").strip()
+
+    # Prefer unmasked mobile for matching; fall back to other phone columns.
+    raw_phone = (
+        r.get("Unmasked_Mobile_Number")
+        or r.get("contextDetails_recipientPhoneNumber")
+        or r.get("telephonyData_toNumber")
+        or ""
+    )
+    raw_phone = str(raw_phone).strip()
+    mobile_digits = normalize_phone(raw_phone)
+
+    duration_seconds = 0
+    try:
+        duration_seconds = int(float(str(r.get("duration") or 0).strip() or 0))
+    except Exception:
+        duration_seconds = 0
+
+    status_raw = str(r.get("status") or "").strip()
+    disposition = str(r.get("disposition") or "").strip()
+    transcript = str(r.get("transcript") or "").strip()
+    recording_url = str(r.get("recordingUrl") or "").strip()
+
+    created_at = _parse_iso_datetime(r.get("createdAt"))
+    updated_at = _parse_iso_datetime(r.get("updatedAt"))
+    lead_uploaded_on = _parse_iso_datetime(r.get("leadUploadedOn"))
+
+    # ---- call_history (call-level truth) -----------------------------------
+    call_history_set: Dict[str, Any] = {
+        "id": call_sid,
+        "call_sid": call_sid,
+        "mobile_digits": mobile_digits,
+        "phone": raw_phone,
+        "updated_at": datetime.utcnow(),
+    }
+
+    # Value-bearing fields only (so blank CSV doesn't wipe good data).
+    if status_raw:
+        call_history_set["futwork_status"] = status_raw
+        call_history_set["status"] = status_raw
+    if disposition:
+        call_history_set["disposition"] = disposition
+    if duration_seconds:
+        call_history_set["duration"] = duration_seconds
+    if recording_url:
+        call_history_set["recording_url"] = recording_url
+    if transcript:
+        call_history_set["transcript"] = transcript
+
+    # Timing: preserve vendor timestamps when present.
+    if created_at:
+        call_history_set["created_at"] = created_at
+    if updated_at:
+        call_history_set["provider_updated_at"] = updated_at
+    if lead_uploaded_on:
+        call_history_set["lead_uploaded_on"] = lead_uploaded_on
+
+    # Correlation keys (useful for joining webhook ↔ lead ↔ campaign)
+    for src, dst in (
+        ("agentId", "agent_id"),
+        ("contextDetails_recipientData_campaignId", "campaign_id"),
+        ("contextDetails_recipientData_leadId", "lead_id"),
+        ("contextDetails_recipientData_unique_identifier", "external_id"),
+        ("telephonyData_provider", "provider"),
+        ("telephonyData_providerCallId", "provider_call_id"),
+        ("telephonyData_direction", "direction"),
+        ("telephonyData_fromNumber", "from_number"),
+        ("telephonyData_toNumber", "to_number"),
+        ("telephonyData_hangupBy", "hangup_by"),
+        ("telephonyData_hangupReason", "hangup_reason"),
+        ("dropoff", "dropoff"),
+    ):
+        val = r.get(src)
+        if val is None:
+            continue
+        sval = str(val).strip()
+        if sval:
+            call_history_set[dst] = sval
+
+    # Optional system extraction fields from Futwork report (raw, not AI truth)
+    extracted_call_summary = str(r.get("extractedData_call_summary") or "").strip()
+    extracted_disposition = str(r.get("extractedData_disposition") or "").strip()
+    extracted_callback_dt = str(r.get("extractedData_callback_date_time") or "").strip()
+    extracted_data: Dict[str, Any] = {}
+    if extracted_call_summary:
+        extracted_data["call_summary"] = extracted_call_summary
+    if extracted_disposition:
+        extracted_data["disposition"] = extracted_disposition
+    if extracted_callback_dt:
+        extracted_data["callback_date_time"] = extracted_callback_dt
+    if extracted_data:
+        call_history_set["extracted_data"] = extracted_data
+
+    # ---- leads (snapshot fields only) --------------------------------------
+    lead_set: Dict[str, Any] = {
+        "mobile_digits": mobile_digits,
+        "mobile": raw_phone,
+        "updated_at": datetime.utcnow(),
+    }
+    if created_at:
+        lead_set["last_call_date"] = created_at
+    if status_raw:
+        lead_set["last_call_status_raw"] = status_raw
+        lead_set["last_call_status"] = status_raw
+    if duration_seconds:
+        lead_set["last_call_duration"] = duration_seconds
+    if recording_url:
+        lead_set["last_recording_url"] = recording_url
+    if disposition:
+        lead_set["disposition"] = disposition
+    if transcript:
+        lead_set["transcript"] = transcript
+
+    # Preserve correlation ids on the lead doc (useful for matching webhooks)
+    lead_id = str(r.get("contextDetails_recipientData_leadId") or "").strip()
+    if lead_id:
+        lead_set["futwork_lead_id"] = lead_id
+    external_id = str(r.get("contextDetails_recipientData_unique_identifier") or "").strip()
+    if external_id:
+        lead_set["external_id"] = external_id
+    campaign_id = str(r.get("contextDetails_recipientData_campaignId") or "").strip()
+    if campaign_id:
+        lead_set["campaign_id"] = campaign_id
+    customer_name = str(r.get("contextDetails_recipientData_customer_name") or "").strip()
+    if customer_name and customer_name != "-":
+        lead_set["full_name"] = customer_name
+
+    return call_history_set, lead_set, call_sid

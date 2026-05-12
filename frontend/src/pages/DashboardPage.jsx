@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
+import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import {
   BarChart,
@@ -33,13 +34,14 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "../components/ui/popover";
 import Sidebar from "../components/Sidebar";
+import { DashboardSkeleton } from "../components/feedback/Skeletons";
 import { api } from "../lib/api";
 
 const DashboardPage = ({ onLogout, currentUser }) => {
   const navigate = useNavigate();
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [timeFilter, setTimeFilter] = useState("all");
+  const [timeFilter, setTimeFilter] = useState("alltime");
   const [greeting, setGreeting] = useState("");
   const [projects, setProjects] = useState([]);
   const [selectedProject, setSelectedProject] = useState("all");
@@ -88,23 +90,31 @@ const DashboardPage = ({ onLogout, currentUser }) => {
       setStats(response.data);
     } catch (error) {
       console.error("Error fetching stats:", error);
+      toast.error("Couldn't load dashboard stats");
     } finally {
       setLoading(false);
     }
   };
 
   const formatNumber = (num) => {
-    if (num >= 1000) return `${(num / 1000).toFixed(1)}K`;
-    return num?.toString() || "0";
+    const n = Number(num);
+    if (!Number.isFinite(n)) return "0";
+    return n.toLocaleString("en-IN");
   };
 
   const timeFilters = ["7 Days", "15 Days", "30 Days", "All Time"];
 
   // Prepare chart data
+  const mapLeadSourceLabel = (raw) => {
+    const s = String(raw || "");
+    if (s === "Futwork CSV Import" || s.includes("Futwork")) return "Platform Pipeline";
+    return s || "Other";
+  };
+
   const sourceChartData = stats?.lead_source_stats
     ? Object.entries(stats.lead_source_stats)
         .slice(0, 6)
-        .map(([name, value]) => ({ name, value }))
+        .map(([name, value]) => ({ name: mapLeadSourceLabel(name), value }))
     : [];
 
   const statusChartData = stats?.lead_status_stats
@@ -270,9 +280,7 @@ const DashboardPage = ({ onLogout, currentUser }) => {
           </motion.div>
 
           {loading ? (
-            <div className="flex items-center justify-center h-64">
-              <div className="w-8 h-8 border-2 border-[#C5A059] border-t-transparent rounded-full spinner" />
-            </div>
+            <DashboardSkeleton />
           ) : !stats ? (
             <div className="flex items-center justify-center h-64">
               <p className="text-[#A3A3A3]">Failed to load data. Please refresh.</p>
@@ -288,9 +296,14 @@ const DashboardPage = ({ onLogout, currentUser }) => {
               >
                 {/* Cold Leads Alert */}
                 <motion.div
-                  className="glass-card rounded-lg p-5 cursor-pointer border-l-4 border-l-blue-500"
-                  whileHover={{ scale: 1.01, borderColor: "rgba(59, 130, 246, 0.5)" }}
-                  onClick={() => navigate("/virtual-customer?temperature=Cold")}
+                  className="glass-card rounded-lg p-5 cursor-pointer border-l-4 border-l-blue-500 hover-lift"
+                  whileHover={{ scale: 1.005 }}
+                  transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+                  onClick={() =>
+                    navigate(
+                      `/virtual-customer?qualification_category=${encodeURIComponent("Cold")}`
+                    )
+                  }
                   data-testid="metric-cold-leads"
                 >
                   <div className="flex items-center justify-between">
@@ -316,9 +329,14 @@ const DashboardPage = ({ onLogout, currentUser }) => {
 
                 {/* Dormant Leads Alert */}
                 <motion.div
-                  className="glass-card rounded-lg p-5 cursor-pointer border-l-4 border-l-amber-500"
-                  whileHover={{ scale: 1.01, borderColor: "rgba(245, 158, 11, 0.5)" }}
-                  onClick={() => navigate("/virtual-customer?temperature=Cold")}
+                  className="glass-card rounded-lg p-5 cursor-pointer border-l-4 border-l-amber-500 hover-lift"
+                  whileHover={{ scale: 1.005 }}
+                  transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+                  onClick={() =>
+                    navigate(
+                      `/virtual-customer?qualification_category=${encodeURIComponent("Dormant")}`
+                    )
+                  }
                   data-testid="metric-dormant-leads"
                 >
                   <div className="flex items-center justify-between">
@@ -352,8 +370,9 @@ const DashboardPage = ({ onLogout, currentUser }) => {
               >
                 {/* Total Leads */}
                 <motion.div
-                  className="glass-card rounded-lg p-6 cursor-pointer"
-                  whileHover={{ scale: 1.02, borderColor: "rgba(197, 160, 89, 0.5)" }}
+                  className="glass-card rounded-lg p-6 cursor-pointer hover-lift"
+                  whileHover={{ scale: 1.01 }}
+                  transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
                   onClick={() => navigate("/virtual-customer")}
                   data-testid="metric-total-leads"
                 >
@@ -375,9 +394,14 @@ const DashboardPage = ({ onLogout, currentUser }) => {
 
                 {/* VIP Pipeline */}
                 <motion.div
-                  className="glass-card rounded-lg p-6 cursor-pointer"
-                  whileHover={{ scale: 1.02, borderColor: "rgba(197, 160, 89, 0.5)" }}
-                  onClick={() => navigate("/virtual-customer?vip=true")}
+                  className="glass-card rounded-lg p-6 cursor-pointer hover-lift"
+                  whileHover={{ scale: 1.01 }}
+                  transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+                  onClick={() =>
+                    navigate(
+                      `/virtual-customer?qualification_category=${encodeURIComponent("VIP Pipeline")}`
+                    )
+                  }
                   data-testid="metric-vip-pipeline"
                 >
                   <div className="flex items-start justify-between mb-4">
@@ -398,9 +422,14 @@ const DashboardPage = ({ onLogout, currentUser }) => {
 
                 {/* Hot Leads */}
                 <motion.div
-                  className="glass-card rounded-lg p-6 cursor-pointer"
-                  whileHover={{ scale: 1.02, borderColor: "rgba(197, 160, 89, 0.5)" }}
-                  onClick={() => navigate("/virtual-customer?temperature=Hot")}
+                  className="glass-card rounded-lg p-6 cursor-pointer hover-lift"
+                  whileHover={{ scale: 1.01 }}
+                  transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+                  onClick={() =>
+                    navigate(
+                      `/virtual-customer?qualification_category=${encodeURIComponent("Hot")}`
+                    )
+                  }
                   data-testid="metric-hot-leads"
                 >
                   <div className="flex items-start justify-between mb-4">
@@ -421,8 +450,14 @@ const DashboardPage = ({ onLogout, currentUser }) => {
 
                 {/* Qualified */}
                 <motion.div
-                  className="glass-card rounded-lg p-6 cursor-pointer"
-                  whileHover={{ scale: 1.02, borderColor: "rgba(197, 160, 89, 0.5)" }}
+                  className="glass-card rounded-lg p-6 cursor-pointer hover-lift"
+                  whileHover={{ scale: 1.01 }}
+                  transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+                  onClick={() =>
+                    navigate(
+                      `/virtual-customer?qualification_category=${encodeURIComponent("Qualified")}`
+                    )
+                  }
                   data-testid="metric-qualified"
                 >
                   <div className="flex items-start justify-between mb-4">

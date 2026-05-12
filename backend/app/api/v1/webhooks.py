@@ -1,5 +1,6 @@
 import json
 import logging
+import uuid
 from datetime import datetime
 from typing import Any, Dict, Optional
 
@@ -14,6 +15,11 @@ from ...utils.campaign_stats import (
     map_futwork_raw_to_live_key,
 )
 from ...utils.csv_processor import normalize_phone
+from ...services.structured_ai_service import (
+    StructuredAIService,
+    not_worthy_call_history_patch,
+    worthy_call_gate,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -174,7 +180,7 @@ async def futwork_webhook(
     # ---- Read previous state (drives delta math) ----------------------------
     prev_call: Optional[Dict[str, Any]] = await db.call_history.find_one(
         {"id": call_sid},
-        {"futwork_status": 1, "disposition": 1, "status": 1},
+        {"futwork_status": 1, "disposition": 1, "status": 1, "structured_extraction": 1, "ai_disposition": 1},
     )
     prev_status_raw = (prev_call or {}).get("futwork_status", "") or ""
     prev_disposition = (prev_call or {}).get("disposition", "") or ""
@@ -240,22 +246,17 @@ async def futwork_webhook(
         upsert=True,
     )
 
-    # ---- Compute campaign deltas (live_status + dispositions) ---------------
+    # ---- Compute campaign deltas (live_status only) -------------------------
     # Stale intermediates contribute zero delta so we never decrement a
     # counter that was already incremented for the terminal phase.
     if is_stale_intermediate:
         live_delta: Dict[str, int]  = {}
-        dispo_delta: Dict[str, int] = {}
     else:
         prev_live_key = map_futwork_raw_to_live_key(prev_status_raw)
         new_live_key  = map_futwork_raw_to_live_key(status_raw)
         live_delta    = compute_inc_delta(prev_live_key, new_live_key)
 
-        prev_dispo_key = map_disposition_to_key(prev_disposition)
-        new_dispo_key  = map_disposition_to_key(disposition)
-        dispo_delta    = compute_inc_delta(prev_dispo_key, new_dispo_key)
-
-    if campaign_id and (live_delta or dispo_delta):
+    if campaign_id and live_delta:
         try:
             or_clauses = [{"futwork_campaign_id": campaign_id}]
             if campaign_name:
@@ -267,8 +268,6 @@ async def futwork_webhook(
             inc: Dict[str, int] = {}
             for k, v in live_delta.items():
                 inc[f"live_status.{k}"] = v
-            for k, v in dispo_delta.items():
-                inc[f"dispositions.{k}"] = v
 
             await db.campaigns.update_one(
                 {"$or": or_clauses},
@@ -279,10 +278,9 @@ async def futwork_webhook(
             )
         except Exception:
             logger.exception(
-                "Failed to apply campaign deltas | campaign_id=%s | live_delta=%s | dispo_delta=%s",
+                "Failed to apply campaign live deltas | campaign_id=%s | live_delta=%s",
                 campaign_id,
                 live_delta,
-                dispo_delta,
             )
 
     # ---- Update lead — respect terminal status ------------------------------
@@ -327,16 +325,107 @@ async def futwork_webhook(
         if transcript:
             lead_set["transcript"] = transcript
 
-    lead_result = await db.leads.update_one(update_filter, {"$set": lead_set}, upsert=False)
+    # Maintain alias field for frontend compatibility when lead has residence location.
+    # (Some writers only set current_residence_location; frontend also reads the alias.)
+    # We do not overwrite with empty.
+    if lead_set.get("current_residence_location") and not lead_set.get("current_residential_location"):
+        lead_set["current_residential_location"] = lead_set.get("current_residence_location")
+
+    lead_result = await db.leads.update_one(
+        update_filter,
+        {
+            "$set": lead_set,
+            "$setOnInsert": {
+                "id": str(uuid.uuid4()),
+                "created_at": datetime.utcnow(),
+                "source": "Webhook Inbound",
+                "temperature": "Warm",
+                "futwork_sync_status": "pushed",
+            },
+        },
+        upsert=True,
+    )
+
+    # ---- Structured AI extraction (terminal webhooks only) ------------------
+    unified_extraction = None
+    if can_advance_lead and incoming_terminal and (transcript or extracted_data):
+        try:
+            svc = StructuredAIService(db)
+            effective_transcript = transcript or (_as_dict(extracted_data).get("transcript") if extracted_data else "") or ""
+            worthy, reasons = worthy_call_gate(status_raw, effective_transcript)
+            if not worthy:
+                logger.info(
+                    "Skipping OpenAI extraction (not worthy) | callSid=%s | status=%s | reasons=%s",
+                    call_sid,
+                    status_raw,
+                    reasons,
+                )
+                await db.call_history.update_one(
+                    {"id": call_sid},
+                    {"$set": not_worthy_call_history_patch()},
+                )
+            else:
+                unified_extraction = await svc.extract_unified(
+                    customer_name=customer_name,
+                    phone_number=raw_phone,
+                    system_disposition=disposition,
+                    recording_url=recording_url,
+                    transcript=effective_transcript,
+                )
+                await db.call_history.update_one(
+                    {"id": call_sid},
+                    {"$set": svc.to_db_call_history_patch_unified(unified_extraction)},
+                )
+                await db.leads.update_one(
+                    update_filter,
+                    {"$set": svc.to_db_lead_patch_unified(unified_extraction)},
+                )
+        except Exception:
+            logger.exception("Structured AI extraction failed | callSid=%s", call_sid)
+
+    # ---- Campaign dispositions: always align with transcript-derived outcome --
+    # Prefer AI extraction; fall back to system disposition when AI is unavailable.
+    if not is_stale_intermediate and campaign_id and incoming_terminal:
+        try:
+            svc = StructuredAIService(db)
+            prev_bucket = None
+            if prev_call:
+                prev_struct = (prev_call or {}).get("structured_extraction") or {}
+                prev_ai_disp = (prev_struct.get("disposition") if isinstance(prev_struct, dict) else None) or (prev_call or {}).get("ai_disposition")
+                prev_bucket = (
+                    svc.campaign_bucket_from_ai_disposition_value(prev_ai_disp)
+                    if prev_ai_disp
+                    else map_disposition_to_key(prev_disposition)
+                )
+
+            if unified_extraction is not None:
+                new_bucket = svc.campaign_bucket_from_ai_disposition_value(unified_extraction.disposition)
+            else:
+                new_bucket = map_disposition_to_key(disposition)
+
+            dispo_delta = compute_inc_delta(prev_bucket, new_bucket)
+            if dispo_delta:
+                or_clauses = [{"futwork_campaign_id": campaign_id}]
+                if campaign_name:
+                    or_clauses.append({"name": campaign_name})
+                fid = (settings.FUTWORK_CAMPAIGN_ID or "").strip()
+                if fid:
+                    or_clauses.append({"id": fid})
+                inc: Dict[str, int] = {f"dispositions.{k}": v for k, v in dispo_delta.items()}
+                await db.campaigns.update_one(
+                    {"$or": or_clauses},
+                    {"$inc": inc, "$set": {"updated_at": datetime.utcnow()}},
+                )
+        except Exception:
+            logger.exception("Failed to apply disposition delta | callSid=%s", call_sid)
 
     # ---- Final summary log --------------------------------------------------
     logger.info(
-        "Futwork webhook processed | callSid=%s | phase=%s | live_delta=%s | dispo_delta=%s | "
+        "Futwork webhook processed | callSid=%s | phase=%s | live_delta=%s | "
         "lead_advanced=%s | lead_matched=%s",
         call_sid,
         status_raw,
         live_delta,
-        dispo_delta,
         can_advance_lead,
         bool(lead_result.matched_count),
     )
@@ -346,7 +435,6 @@ async def futwork_webhook(
         "call_sid": call_sid,
         "phase": status_raw,
         "live_delta": live_delta,
-        "dispo_delta": dispo_delta,
         "lead_advanced": can_advance_lead,
         "lead_matched": bool(lead_result.matched_count),
     }

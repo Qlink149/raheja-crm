@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { motion } from "framer-motion";
 import { useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
@@ -33,6 +33,8 @@ import {
 import { Button } from "../components/ui/button";
 import { ScrollArea } from "../components/ui/scroll-area";
 import Sidebar from "../components/Sidebar";
+import EmptyState from "../components/feedback/EmptyState";
+import { CustomerDetailSkeleton } from "../components/feedback/Skeletons";
 import { api } from "../lib/api";
 
 const CustomerDetailPage = ({ onLogout, currentUser }) => {
@@ -40,9 +42,35 @@ const CustomerDetailPage = ({ onLogout, currentUser }) => {
   const { id } = useParams();
   const [lead, setLead] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [earliestCallMs, setEarliestCallMs] = useState(null);
 
   useEffect(() => {
     fetchLeadDetail();
+  }, [id]);
+
+  useEffect(() => {
+    if (!id) return;
+    let mounted = true;
+    (async () => {
+      try {
+        const res = await api.get(`/leads/${id}/calls`);
+        if (!mounted) return;
+        const list = res.data?.calls || [];
+        let minTs = null;
+        for (const c of list) {
+          const raw = c.created_at || c.call_date;
+          if (!raw) continue;
+          const t = new Date(raw).getTime();
+          if (!Number.isNaN(t) && (minTs === null || t < minTs)) minTs = t;
+        }
+        setEarliestCallMs(minTs);
+      } catch {
+        if (mounted) setEarliestCallMs(null);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
   }, [id]);
 
   const fetchLeadDetail = async () => {
@@ -101,86 +129,108 @@ const CustomerDetailPage = ({ onLogout, currentUser }) => {
     });
   };
 
-  // Generate context updates based on lead data
-  const generateContextUpdates = () => {
+  const formatTimelineDate = (ms) => {
+    if (ms == null || Number.isNaN(ms)) return "—";
+    return new Date(ms).toLocaleDateString("en-GB", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "2-digit",
+    });
+  };
+
+  // Generate context updates based on lead data; Initial contact uses earliest call_history created_at
+  const generateContextUpdates = (leadRow, earliestMs) => {
     const updates = [];
     const baseDate = new Date();
     
     // Add updates based on available lead data - only if value exists and is not empty
-    if (lead?.configuration && lead.configuration !== '' && lead.configuration !== 'N/A') {
+    if (leadRow?.configuration && leadRow.configuration !== '' && leadRow.configuration !== 'N/A') {
       updates.push({
         date: new Date(baseDate.getTime() - 30 * 24 * 60 * 60 * 1000).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit' }),
         icon: 'phone',
-        context: `User interested in ${lead.configuration} configuration`,
+        context: `User interested in ${leadRow.configuration} configuration`,
         type: 'call'
       });
     }
     
-    if (lead?.current_residence_type && lead.current_residence_type !== '' && lead.current_residence_type !== 'N/A') {
+    if (leadRow?.current_residence_type && leadRow.current_residence_type !== '' && leadRow.current_residence_type !== 'N/A') {
       updates.push({
         date: new Date(baseDate.getTime() - 25 * 24 * 60 * 60 * 1000).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit' }),
         icon: 'whatsapp',
-        context: `Currently residing in ${lead.current_residence_type}`,
+        context: `Currently residing in ${leadRow.current_residence_type}`,
         type: 'whatsapp'
       });
     }
     
-    if (lead?.reason_for_purchase && lead.reason_for_purchase !== '' && lead.reason_for_purchase !== 'N/A') {
+    if (leadRow?.reason_for_purchase && leadRow.reason_for_purchase !== '' && leadRow.reason_for_purchase !== 'N/A') {
       updates.push({
         date: new Date(baseDate.getTime() - 20 * 24 * 60 * 60 * 1000).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit' }),
         icon: 'human',
-        context: `Purchase intent: ${lead.reason_for_purchase}`,
+        context: `Purchase intent: ${leadRow.reason_for_purchase}`,
         type: 'human'
       });
     }
     
-    if (lead?.possession_requirement && lead.possession_requirement !== '' && lead.possession_requirement !== 'N/A') {
+    if (leadRow?.possession_requirement && leadRow.possession_requirement !== '' && leadRow.possession_requirement !== 'N/A') {
       updates.push({
         date: new Date(baseDate.getTime() - 15 * 24 * 60 * 60 * 1000).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit' }),
         icon: 'phone',
-        context: `Possession preference: ${lead.possession_requirement}`,
+        context: `Possession preference: ${leadRow.possession_requirement}`,
         type: 'call'
       });
     }
     
-    if (lead?.budget && lead.budget !== '' && lead.budget !== '0' && lead.budget !== 'N/A') {
+    if (leadRow?.budget && leadRow.budget !== '' && leadRow.budget !== '0' && leadRow.budget !== 'N/A') {
       updates.push({
         date: new Date(baseDate.getTime() - 10 * 24 * 60 * 60 * 1000).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit' }),
         icon: 'whatsapp',
-        context: `Budget confirmed: ${lead.budget} Cr`,
+        context: `Budget confirmed: ${leadRow.budget} Cr`,
         type: 'whatsapp'
       });
     }
     
-    if (lead?.project && lead.project !== '' && lead.project !== 'N/A') {
+    if (leadRow?.project && leadRow.project !== '' && leadRow.project !== 'N/A') {
       updates.push({
         date: new Date(baseDate.getTime() - 5 * 24 * 60 * 60 * 1000).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit' }),
         icon: 'human',
-        context: `Showed interest in ${lead.project}`,
+        context: `Showed interest in ${leadRow.project}`,
         type: 'human'
       });
     }
     
-    if (lead?.next_action_date && lead.next_action_date !== '' && lead.next_action_date !== 'N/A') {
+    if (leadRow?.next_action_date && leadRow.next_action_date !== '' && leadRow.next_action_date !== 'N/A') {
       updates.push({
         date: new Date(baseDate.getTime() - 2 * 24 * 60 * 60 * 1000).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit' }),
         icon: 'human',
-        context: `Site visit scheduled for ${lead.next_action_date}`,
+        context: `Site visit scheduled for ${leadRow.next_action_date}`,
         type: 'human'
       });
     }
-    
-    return updates.length > 0 ? updates : [
+
+    if (earliestMs != null && !Number.isNaN(earliestMs)) {
+      updates.unshift({
+        date: formatTimelineDate(earliestMs),
+        icon: "phone",
+        context: "Initial contact made",
+        type: "call",
+      });
+    }
+
+    if (updates.length > 0) return updates;
+    return [
       {
-        date: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit' }),
-        icon: 'phone',
-        context: 'Initial contact made',
-        type: 'call'
-      }
+        date: "—",
+        icon: "phone",
+        context: "Initial contact made",
+        type: "call",
+      },
     ];
   };
 
-  const contextUpdates = lead ? generateContextUpdates() : [];
+  const contextUpdates = useMemo(
+    () => (lead ? generateContextUpdates(lead, earliestCallMs) : []),
+    [lead, earliestCallMs]
+  );
 
   const getContextIcon = (type) => {
     switch (type) {
@@ -212,8 +262,10 @@ const CustomerDetailPage = ({ onLogout, currentUser }) => {
     return (
       <div className="flex min-h-screen bg-[#0A0A0A]">
         <Sidebar activePage="virtual-customer" onLogout={onLogout} currentUser={currentUser} />
-        <main className="flex-1 ml-20 lg:ml-64 flex items-center justify-center">
-          <div className="w-8 h-8 border-2 border-[#C5A059] border-t-transparent rounded-full spinner" />
+        <main className="flex-1 ml-20 lg:ml-64 p-6 overflow-auto">
+          <div className="max-w-7xl mx-auto">
+            <CustomerDetailSkeleton />
+          </div>
         </main>
       </div>
     );
@@ -223,16 +275,17 @@ const CustomerDetailPage = ({ onLogout, currentUser }) => {
     return (
       <div className="flex min-h-screen bg-[#0A0A0A]">
         <Sidebar activePage="virtual-customer" onLogout={onLogout} currentUser={currentUser} />
-        <main className="flex-1 ml-20 lg:ml-64 flex items-center justify-center">
-          <div className="text-center">
-            <p className="text-[#A3A3A3] mb-4">Customer not found</p>
-            <Button
-              onClick={() => navigate("/virtual-customer")}
-              className="bg-[#C5A059] text-black hover:bg-[#E5C585]"
-            >
-              Back to Customers
-            </Button>
-          </div>
+        <main className="flex-1 ml-20 lg:ml-64 flex items-center justify-center p-8">
+          <EmptyState
+            icon={User}
+            title="Customer not found"
+            description="This lead may have been removed or merged. Head back to the customer list and try again."
+            action={{
+              label: "Back to Customers",
+              onClick: () => navigate("/virtual-customer"),
+              icon: ArrowLeft,
+            }}
+          />
         </main>
       </div>
     );
@@ -266,9 +319,9 @@ const CustomerDetailPage = ({ onLogout, currentUser }) => {
             animate={{ opacity: 1, y: 0 }}
             className="glass-card rounded-xl p-8 mb-6"
           >
-            <div className="flex flex-col lg:flex-row gap-8">
+            <div className="flex flex-col lg:flex-row gap-8 min-w-0">
               {/* Avatar Section */}
-              <div className="flex flex-col items-center lg:items-start">
+              <div className="flex flex-col items-center lg:items-start flex-shrink-0">
                 <div className="w-32 h-32 rounded-full bg-gradient-to-br from-[#C5A059] to-[#8A6D3B] flex items-center justify-center text-black text-4xl font-serif mb-4 shadow-xl">
                   {getInitials(lead.full_name)}
                 </div>
@@ -281,13 +334,13 @@ const CustomerDetailPage = ({ onLogout, currentUser }) => {
               </div>
 
               {/* Profile Details */}
-              <div className="flex-1">
-                <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4 mb-6">
-                  <div>
-                    <h1 className="font-serif text-3xl text-white mb-2">
+              <div className="flex-1 min-w-0">
+                <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4 mb-6 min-w-0">
+                  <div className="min-w-0">
+                    <h1 className="font-serif text-3xl text-white mb-2 tracking-tight truncate">
                       {getDisplayName()}
                     </h1>
-                    <p className="text-[#A3A3A3]">
+                    <p className="text-[#A3A3A3] truncate">
                       {displayValue(lead.designation) !== "N/A"
                         ? lead.designation
                         : "Professional"}
@@ -317,41 +370,49 @@ const CustomerDetailPage = ({ onLogout, currentUser }) => {
                 </div>
 
                 {/* Quick Info Grid */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-white/5 rounded-lg">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 min-w-0">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="p-2 bg-white/5 rounded-lg flex-shrink-0">
                       <MapPin className="w-4 h-4 text-[#C5A059]" />
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <p className="text-xs text-[#525252]">Location</p>
-                      <p className="text-sm text-white">{displayValue(lead.current_residential_location || lead.current_residence_location)}</p>
+                      <p className="text-sm text-white truncate" title={displayValue(lead.current_residential_location || lead.current_residence_location)}>
+                        {displayValue(lead.current_residential_location || lead.current_residence_location)}
+                      </p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-white/5 rounded-lg">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="p-2 bg-white/5 rounded-lg flex-shrink-0">
                       <Home className="w-4 h-4 text-[#C5A059]" />
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <p className="text-xs text-[#525252]">Residence Type</p>
-                      <p className="text-sm text-white">{displayValue(lead.current_residence_type)}</p>
+                      <p className="text-sm text-white truncate" title={displayValue(lead.current_residence_type)}>
+                        {displayValue(lead.current_residence_type)}
+                      </p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-white/5 rounded-lg">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="p-2 bg-white/5 rounded-lg flex-shrink-0">
                       <Building2 className="w-4 h-4 text-[#C5A059]" />
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <p className="text-xs text-[#525252]">Project Interest</p>
-                      <p className="text-sm text-white">{displayValue(lead.project)}</p>
+                      <p className="text-sm text-white truncate" title={displayValue(lead.project)}>
+                        {displayValue(lead.project)}
+                      </p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-white/5 rounded-lg">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="p-2 bg-white/5 rounded-lg flex-shrink-0">
                       <Target className="w-4 h-4 text-[#C5A059]" />
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <p className="text-xs text-[#525252]">Intent</p>
-                      <p className="text-sm text-white">{lead.intent_category || "N/A"}</p>
+                      <p className="text-sm text-white truncate" title={lead.intent_category || "N/A"}>
+                        {lead.intent_category || "N/A"}
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -360,13 +421,13 @@ const CustomerDetailPage = ({ onLogout, currentUser }) => {
           </motion.div>
 
           {/* Content Grid */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 min-w-0">
             {/* AI Persona Summary & Strategic Next Move */}
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.1 }}
-              className="lg:col-span-5 space-y-6"
+              className="lg:col-span-5 space-y-6 min-w-0"
             >
               {/* AI Persona Summary */}
               <AIInsightCard
@@ -437,12 +498,12 @@ const CustomerDetailPage = ({ onLogout, currentUser }) => {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.2 }}
-              className="lg:col-span-3 glass-card rounded-xl p-6 h-fit"
+              className="lg:col-span-3 glass-card rounded-xl p-6 min-w-0 lg:max-h-[calc(100vh-180px)] flex flex-col"
             >
-              <h2 className="text-xs uppercase tracking-widest text-[#C5A059] font-semibold mb-6">
-                Interaction Timeline
-              </h2>
-              <CallsTimeline leadId={id} />
+              <h2 className="kicker mb-6 flex-shrink-0">Interaction Timeline</h2>
+              <div className="flex-1 min-h-0">
+                <CallsTimeline leadId={id} />
+              </div>
             </motion.div>
 
             {/* Context Update Timeline */}
@@ -450,20 +511,18 @@ const CustomerDetailPage = ({ onLogout, currentUser }) => {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.3 }}
-              className="lg:col-span-4 glass-card rounded-xl p-6 h-fit"
+              className="lg:col-span-4 glass-card rounded-xl p-6 min-w-0 lg:max-h-[calc(100vh-180px)] flex flex-col"
             >
-              <div className="flex items-center gap-2 mb-6">
+              <div className="flex items-center gap-2 mb-6 flex-shrink-0">
                 <History className="w-5 h-5 text-[#C5A059]" />
-                <h2 className="text-xs uppercase tracking-widest text-[#C5A059] font-semibold">
-                  Context Updates
-                </h2>
+                <h2 className="kicker">Context Updates</h2>
               </div>
-              
-              <ScrollArea className="h-80">
-                <div className="relative">
+
+              <ScrollArea className="flex-1 min-h-0 max-h-80 lg:max-h-none">
+                <div className="relative pr-2">
                   {/* Timeline line */}
                   <div className="absolute left-[18px] top-0 bottom-0 w-px bg-white/10" />
-                  
+
                   <div className="space-y-4">
                     {contextUpdates.map((update, index) => (
                       <motion.div
@@ -471,22 +530,22 @@ const CustomerDetailPage = ({ onLogout, currentUser }) => {
                         initial={{ opacity: 0, x: -10 }}
                         animate={{ opacity: 1, x: 0 }}
                         transition={{ delay: index * 0.1 }}
-                        className="relative flex gap-4 pl-1"
+                        className="relative flex gap-4 pl-1 min-w-0"
                       >
                         {/* Icon */}
                         <div className={`relative z-10 flex-shrink-0 w-9 h-9 rounded-full border flex items-center justify-center ${getContextIconBg(update.type)}`}>
                           {getContextIcon(update.type)}
                         </div>
-                        
+
                         {/* Content */}
-                        <div className="flex-1 pb-4">
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className="text-xs font-mono text-[#C5A059]">{update.date}</span>
+                        <div className="flex-1 pb-4 min-w-0">
+                          <div className="flex items-center gap-2 mb-1 flex-wrap">
+                            <span className="text-xs font-mono text-[#C5A059] tabular-nums">{update.date}</span>
                             <span className="text-xs text-[#525252]">
                               {update.type === 'call' ? 'Call' : update.type === 'whatsapp' ? 'WhatsApp' : 'Agent'}
                             </span>
                           </div>
-                          <p className="text-sm text-[#A3A3A3] leading-relaxed">
+                          <p className="text-sm text-[#A3A3A3] leading-relaxed break-words">
                             {update.context.replace(/Profiling in Progress/g, 'property details')}
                           </p>
                         </div>
@@ -699,10 +758,10 @@ const CallsTimeline = ({ leadId }) => {
   }
 
   return (
-    <ScrollArea className="max-h-[520px] pr-2">
-      <div className="space-y-4">
+    <ScrollArea className="h-full max-h-[60vh] lg:max-h-none pr-2">
+      <div className="space-y-4 pr-2">
         {calls.map((call) => (
-          <CallCard key={call.lead_id} call={call} />
+          <CallCard key={call.call_sid || `${call.lead_id}-${call.call_date}`} call={call} />
         ))}
       </div>
     </ScrollArea>
@@ -736,19 +795,25 @@ const dispositionStyle = (disposition, status) => {
 };
 
 const CallCard = ({ call }) => {
+  const aiWorthy = call.ai_worthy !== false;
   const [expanded, setExpanded] = useState(false);
-  const [summary, setSummary] = useState(call.ai_call_summary || "");
+  const [summary, setSummary] = useState(
+    call.ai_call_summary || (aiWorthy ? "" : "No meaningful conversation")
+  );
   const [loading, setLoading] = useState(false);
 
   const label = call.disposition || call.status || "Unknown";
 
   const toggle = async () => {
+    if (!aiWorthy) return;
     const next = !expanded;
     setExpanded(next);
     if (next && !summary && !loading) {
       setLoading(true);
       try {
-        const res = await api.post(`/leads/${call.lead_id}/call-summary`);
+        const params = {};
+        if (call.call_sid) params.call_sid = call.call_sid;
+        const res = await api.post(`/leads/${call.lead_id}/call-summary`, null, { params });
         setSummary(res.data?.summary || "Summary unavailable.");
       } catch (e) {
         setSummary(e?.response?.data?.detail || "Summary unavailable.");
@@ -785,9 +850,16 @@ const CallCard = ({ call }) => {
 
         {/* AI Summary toggle */}
         <button
+          type="button"
           onClick={toggle}
-          data-testid={`toggle-call-summary-${call.lead_id}`}
-          className="mt-3 flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-[#C5A059] hover:text-[#E5C585] transition-colors"
+          disabled={!aiWorthy}
+          title={!aiWorthy ? "No meaningful conversation — AI summary disabled" : undefined}
+          data-testid={`toggle-call-summary-${call.call_sid || call.lead_id}`}
+          className={`mt-3 flex items-center gap-1.5 text-[11px] uppercase tracking-wider transition-colors ${
+            aiWorthy
+              ? "text-[#C5A059] hover:text-[#E5C585]"
+              : "text-[#525252] cursor-not-allowed opacity-60"
+          }`}
         >
           <Bot className="w-3.5 h-3.5" />
           AI Call Summary

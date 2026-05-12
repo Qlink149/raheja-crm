@@ -8,17 +8,20 @@ import {
   PhoneCall,
   Package,
   Info,
+  Pencil,
   Copy,
   Check,
   Clock,
   Loader2,
   ChevronDown,
   ChevronUp,
-  Download,
 } from "lucide-react";
 import Sidebar from "../components/Sidebar";
 import UploadLeadsModal from "../components/UploadLeadsModal";
-import { api, getApiBase, isBackendConfigured } from "../lib/api";
+import LeadUploadDetailsModal from "../components/LeadUploadDetailsModal";
+import EmptyState from "../components/feedback/EmptyState";
+import { CampaignSkeleton } from "../components/feedback/Skeletons";
+import { api, isBackendConfigured } from "../lib/api";
 
 const LEAD_UPLOAD_MAX_MB = 10;
 import { Button } from "../components/ui/button";
@@ -76,26 +79,8 @@ const CampaignsPage = ({ onLogout, currentUser }) => {
   const [uploadSectionOpen, setUploadSectionOpen] = useState(true);
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
-  const [failedSyncCount, setFailedSyncCount] = useState(0);
   const [retryingFailed, setRetryingFailed] = useState(false);
-
-  const fetchFailedSyncCount = useCallback(async (campaignId) => {
-    if (!campaignId || !isBackendConfigured()) {
-      setFailedSyncCount(0);
-      return;
-    }
-    try {
-      const res = await api.get("/leads/count/all", {
-        params: {
-          campaign_id: campaignId,
-          futwork_sync_status: "failed",
-        },
-      });
-      setFailedSyncCount(Number(res.data?.count ?? 0));
-    } catch {
-      setFailedSyncCount(0);
-    }
-  }, []);
+  const [detailsUploadId, setDetailsUploadId] = useState(null);
 
   const fetchUploadHistory = useCallback(async () => {
     const res = await api.get("/campaigns/current/upload-history");
@@ -124,8 +109,7 @@ const CampaignsPage = ({ onLogout, currentUser }) => {
       if (liveOnly) {
         setRefreshingLive(true);
         try {
-          const data = await fetchCampaign(refreshStats);
-          await fetchFailedSyncCount(data?.id);
+          await fetchCampaign(refreshStats);
         } finally {
           setRefreshingLive(false);
         }
@@ -134,11 +118,8 @@ const CampaignsPage = ({ onLogout, currentUser }) => {
       setLoading(true);
       setError(null);
       try {
-        const data = await fetchCampaign(refreshStats);
-        await Promise.all([
-          fetchUploadHistory(),
-          fetchFailedSyncCount(data?.id),
-        ]);
+        await fetchCampaign(refreshStats);
+        await fetchUploadHistory();
       } catch (e) {
         const msg =
           e?.response?.data?.detail ||
@@ -150,16 +131,8 @@ const CampaignsPage = ({ onLogout, currentUser }) => {
         setLoading(false);
       }
     },
-    [fetchCampaign, fetchUploadHistory, fetchFailedSyncCount]
+    [fetchCampaign, fetchUploadHistory]
   );
-
-  useEffect(() => {
-    if (campaign?.id) {
-      fetchFailedSyncCount(campaign.id);
-    } else {
-      setFailedSyncCount(0);
-    }
-  }, [campaign?.id, fetchFailedSyncCount]);
 
   useEffect(() => {
     if (!isBackendConfigured()) {
@@ -177,11 +150,8 @@ const CampaignsPage = ({ onLogout, currentUser }) => {
     setRefreshingMain(true);
     setError(null);
     try {
-      const data = await fetchCampaign(false);
-      await Promise.all([
-        fetchUploadHistory(),
-        fetchFailedSyncCount(data?.id),
-      ]);
+      await fetchCampaign(false);
+      await fetchUploadHistory();
       setLastUpdatedAt(new Date());
       toast.success("Refreshed");
     } catch (e) {
@@ -214,11 +184,8 @@ const CampaignsPage = ({ onLogout, currentUser }) => {
       toast.success(
         `Retry complete: ${d.succeeded ?? 0} succeeded, ${d.still_failed ?? 0} still failed`
       );
-      const data = await fetchCampaign(false);
-      await Promise.all([
-        fetchFailedSyncCount(data?.id),
-        fetchUploadHistory(),
-      ]);
+      await fetchCampaign(false);
+      await fetchUploadHistory();
       setLastUpdatedAt(new Date());
     } catch (e) {
       const msg = e?.response?.data?.detail || e?.message || "Retry failed";
@@ -244,30 +211,26 @@ const CampaignsPage = ({ onLogout, currentUser }) => {
 
   const handleFileSubmit = async (file, options = {}) => {
     if (!file) return;
-    const { pushToFutwork = false } = options;
+    const { batchName = "" } = options;
     setUploading(true);
     const formData = new FormData();
     formData.append("file", file);
     try {
+      const params = {};
+      if (batchName.trim()) params.batch_name = batchName.trim();
       const res = await api.post("/leads/upload", formData, {
-        params: pushToFutwork ? { push_to_futwork: true } : undefined,
+        params: Object.keys(params).length ? params : undefined,
       });
       const d = res.data || {};
       const parts = [];
       if (d.new != null) parts.push(`${d.new} new`);
       if (d.updated != null) parts.push(`${d.updated} updated`);
       if (d.unprocessed) parts.push(`${d.unprocessed} skipped`);
-      if (pushToFutwork) {
-        parts.push(d.futwork_pushed ? "pushed to Futwork" : "Futwork push failed");
-      }
       toast.success(
         parts.length ? `Upload complete: ${parts.join(", ")}` : "Upload complete"
       );
-      const data = await fetchCampaign(false);
-      await Promise.all([
-        fetchUploadHistory(),
-        fetchFailedSyncCount(data?.id),
-      ]);
+      await fetchCampaign(false);
+      await fetchUploadHistory();
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Failed to upload CSV");
       throw e;
@@ -307,11 +270,8 @@ const CampaignsPage = ({ onLogout, currentUser }) => {
     return (
       <div className="flex min-h-screen bg-[#0A0A0A]">
         <Sidebar activePage="campaigns" onLogout={onLogout} currentUser={currentUser} />
-        <main className="flex-1 flex items-center justify-center ml-20 lg:ml-64 p-8">
-          <div className="flex flex-col items-center gap-3 text-[#A3A3A3]">
-            <Loader2 className="h-10 w-10 animate-spin text-[#C5A059]" />
-            <p>Loading campaign…</p>
-          </div>
+        <main className="flex-1 p-4 sm:p-6 lg:p-8 ml-20 lg:ml-64">
+          <CampaignSkeleton />
         </main>
       </div>
     );
@@ -344,7 +304,7 @@ const CampaignsPage = ({ onLogout, currentUser }) => {
 
   const badge = statusBadgeVariant(campaign.status);
   const live = campaign.live_status || {};
-  const futworkId = campaign.futwork_campaign_id || "";
+  const platformId = campaign.futwork_campaign_id || "";
 
   return (
     <TooltipProvider>
@@ -366,7 +326,7 @@ const CampaignsPage = ({ onLogout, currentUser }) => {
               <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-[#A3A3A3]">
                 <span>Campaign ID:</span>
                 <code className="rounded bg-white/5 px-2 py-0.5 text-xs text-white break-all max-w-[min(100%,28rem)]">
-                  {futworkId || "—"}
+                  {platformId || "—"}
                 </code>
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -375,8 +335,8 @@ const CampaignsPage = ({ onLogout, currentUser }) => {
                       variant="ghost"
                       size="icon"
                       className="h-8 w-8 text-[#C5A059] hover:text-[#E5C585]"
-                      onClick={() => handleCopyId(futworkId)}
-                      disabled={!futworkId}
+                      onClick={() => handleCopyId(platformId)}
+                      disabled={!platformId}
                     >
                       {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
                     </Button>
@@ -386,22 +346,6 @@ const CampaignsPage = ({ onLogout, currentUser }) => {
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
-              {failedSyncCount > 0 && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="border-amber-500/30 text-amber-300 hover:bg-amber-900/20"
-                  onClick={handleRetryFailedLeads}
-                  disabled={retryingFailed}
-                >
-                  {retryingFailed ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <RefreshCw className="h-4 w-4 mr-2" />
-                  )}
-                  Retry Failed Leads
-                </Button>
-              )}
               <Button
                 variant="outline"
                 className="border-white/10 text-white hover:bg-white/5"
@@ -432,7 +376,7 @@ const CampaignsPage = ({ onLogout, currentUser }) => {
                           </button>
                         </TooltipTrigger>
                         <TooltipContent className="max-w-xs">
-                          From server configuration (FUTWORK_MAX_ATTEMPTS) when set.
+                          From server configuration (PLATFORM_MAX_ATTEMPTS) when set.
                         </TooltipContent>
                       </Tooltip>
                     </dt>
@@ -450,7 +394,7 @@ const CampaignsPage = ({ onLogout, currentUser }) => {
                           </button>
                         </TooltipTrigger>
                         <TooltipContent className="max-w-xs">
-                          From server configuration (FUTWORK_CALL_RATE_LIMIT) when set.
+                          From server configuration (PLATFORM_CALL_RATE_LIMIT) when set.
                         </TooltipContent>
                       </Tooltip>
                     </dt>
@@ -568,6 +512,20 @@ const CampaignsPage = ({ onLogout, currentUser }) => {
                     <Button
                       type="button"
                       variant="outline"
+                      className="border-amber-500/30 text-amber-300 hover:bg-amber-900/20"
+                      onClick={handleRetryFailedLeads}
+                      disabled={retryingFailed || !campaign?.id}
+                    >
+                      {retryingFailed ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <RefreshCw className="h-4 w-4 mr-2" />
+                      )}
+                      Retry Failed Syncs
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
                       className="border-white/10 text-white hover:bg-white/5"
                       onClick={handleMainRefresh}
                       disabled={refreshingMain}
@@ -582,34 +540,42 @@ const CampaignsPage = ({ onLogout, currentUser }) => {
                   </div>
                 </div>
 
+                {uploadHistory.length === 0 ? (
+                  <div className="rounded-lg border border-white/10 overflow-hidden">
+                    <EmptyState
+                      icon={Upload}
+                      title="No uploads yet"
+                      description="Upload your first CSV batch to start seeing upload history here."
+                      action={{
+                        label: "Upload first batch",
+                        onClick: handleUploadClick,
+                        icon: Upload,
+                      }}
+                    />
+                  </div>
+                ) : (
                 <div className="rounded-lg border border-white/10 overflow-hidden">
                   <Table>
                     <TableHeader>
                       <TableRow className="border-white/10 hover:bg-transparent">
+                        <TableHead className="text-[#A3A3A3]">Batch name</TableHead>
                         <TableHead className="text-[#A3A3A3]">Date</TableHead>
                         <TableHead className="text-[#A3A3A3]">Processed</TableHead>
                         <TableHead className="text-[#A3A3A3]">Unprocessed</TableHead>
+                        <TableHead className="text-[#A3A3A3] w-[100px]">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {uploadHistory.length === 0 ? (
-                        <TableRow className="border-white/10 hover:bg-white/[0.02]">
-                          <TableCell colSpan={3} className="text-center text-[#737373] py-10">
-                            No uploads yet. Upload a CSV to see history here.
-                          </TableCell>
-                        </TableRow>
-                      ) : (
-                        uploadHistory.map((row) => {
-                          const unprocessedCount = Number(row.unprocessed ?? 0);
-                          const downloadHref = `${getApiBase()}/campaigns/current/upload-history/${encodeURIComponent(
-                            row.id
-                          )}/unprocessed.csv`;
+                      {uploadHistory.map((row) => {
                           const dateLabel = formatTableDate(row.created_at);
                           const tooltipLine = [row.filename, formatDateTime(row.created_at)]
                             .filter(Boolean)
                             .join(" • ");
                           return (
                             <TableRow key={row.id} className="border-white/10 hover:bg-white/[0.02]">
+                              <TableCell className="text-white font-medium max-w-[180px] truncate">
+                                {row.batch_name || row.filename || "—"}
+                              </TableCell>
                               <TableCell className="text-white font-medium">
                                 {tooltipLine ? (
                                   <Tooltip>
@@ -624,31 +590,38 @@ const CampaignsPage = ({ onLogout, currentUser }) => {
                                   dateLabel
                                 )}
                               </TableCell>
-                              <TableCell className="text-emerald-400 font-semibold tabular-nums">
+                              <TableCell className="py-3 px-4 text-[#C5A059] font-medium tabular-nums">
                                 {row.processed ?? 0}
                               </TableCell>
-                              <TableCell className="font-semibold tabular-nums">
-                                {unprocessedCount > 0 ? (
-                                  <a
-                                    href={downloadHref}
-                                    download
-                                    className="inline-flex items-center gap-1 text-red-400 hover:text-red-300 hover:underline"
-                                    title="Download unprocessed rows"
-                                  >
-                                    {unprocessedCount}
-                                    <Download className="h-4 w-4" />
-                                  </a>
-                                ) : (
-                                  <span className="text-[#737373]">0</span>
+                              <TableCell className="py-3 px-4">
+                                <span className="text-[#A3A3A3] tabular-nums">
+                                  {(row.unprocessed || 0) + (row.futwork_failed || 0)}
+                                </span>
+                                {row.futwork_failed > 0 && (
+                                  <span className="ml-2 inline-block text-[10px] text-red-400 bg-red-400/10 px-2 py-0.5 rounded-sm border border-red-500/20">
+                                    Includes {row.futwork_failed} Sync Failures
+                                  </span>
                                 )}
+                              </TableCell>
+                              <TableCell className="py-3 px-2">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 text-[#C5A059] hover:text-white hover:bg-white/10"
+                                  aria-label="Upload details"
+                                  onClick={() => setDetailsUploadId(row.id)}
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                </Button>
                               </TableCell>
                             </TableRow>
                           );
-                        })
-                      )}
+                        })}
                     </TableBody>
                   </Table>
                 </div>
+                )}
                 <p className="text-right text-xs text-[#737373]">
                   Last updated: {formatClock(lastUpdatedAt) || "—"}
                 </p>
@@ -662,7 +635,15 @@ const CampaignsPage = ({ onLogout, currentUser }) => {
             onSubmit={handleFileSubmit}
             uploading={uploading}
             maxMb={LEAD_UPLOAD_MAX_MB}
-            canPushToFutwork={Boolean(campaign?.futwork_push_enabled)}
+          />
+
+          <LeadUploadDetailsModal
+            open={Boolean(detailsUploadId)}
+            onOpenChange={(open) => {
+              if (!open) setDetailsUploadId(null);
+            }}
+            uploadId={detailsUploadId}
+            onUpdated={fetchUploadHistory}
           />
         </main>
       </div>

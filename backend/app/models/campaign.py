@@ -77,7 +77,16 @@ class LeadUploadHistoryEntry(BaseModel):
     id: str
     created_at: datetime
     filename: str = ""
+    batch_name: str = ""
+    original_csv_secure_url: str = ""
+    original_csv_public_id: str = ""
     processed: int = 0
     new_leads: int = 0
     updated_leads: int = 0
     unprocessed: int = 0
+    futwork_pushed: int = 0
+    futwork_failed: int = 0
+
+
+class LeadUploadBatchRename(BaseModel):
+    batch_name: str = Field(..., min_length=1, max_length=200)

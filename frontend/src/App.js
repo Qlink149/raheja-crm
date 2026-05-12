@@ -8,6 +8,7 @@ import VirtualCustomerPage from "./pages/VirtualCustomerPage";
 import CustomerDetailPage from "./pages/CustomerDetailPage";
 import CampaignsPage from "./pages/CampaignsPage";
 import AICallingPage from "./pages/AICallingPage";
+import SettingsPage from "./pages/SettingsPage";
 
 const STORAGE_KEY = "rustomjee.currentUser";
 
@@ -38,12 +39,18 @@ function App() {
     <div className="App min-h-screen bg-[#0A0A0A]">
       <Toaster
         position="top-right"
+        theme="dark"
+        richColors
+        closeButton
+        expand={false}
         toastOptions={{
           style: {
-            background: "#1A1A1A",
-            border: "1px solid rgba(197, 160, 89, 0.3)",
-            color: "#fff",
+            background: "rgba(20, 20, 20, 0.92)",
+            border: "1px solid rgba(197, 160, 89, 0.25)",
+            color: "#F5F5F5",
+            fontFamily: "Inter, system-ui, sans-serif",
           },
+          className: "rounded-xl backdrop-blur",
         }}
       />
       <BrowserRouter>
@@ -103,6 +110,16 @@ function App() {
             element={
               isAuthenticated ? (
                 <CampaignsPage onLogout={handleLogout} currentUser={currentUser} />
+              ) : (
+                <Navigate to="/" replace />
+              )
+            }
+          />
+          <Route
+            path="/settings"
+            element={
+              isAuthenticated ? (
+                <SettingsPage onLogout={handleLogout} currentUser={currentUser} />
               ) : (
                 <Navigate to="/" replace />
               )

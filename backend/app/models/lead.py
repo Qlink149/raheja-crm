@@ -55,6 +55,12 @@ class LeadDetail(BaseModel):
     strategicNextMove: Optional[str] = None
     lastCallSummary: Optional[str] = None
 
+    # Migration: historical call-report lead qualification (gpt-4o-mini)
+    budget_match: Optional[bool] = False
+    area_match: Optional[bool] = False
+    timeline_match: Optional[bool] = False
+    qualification_category: Optional[str] = ""
+
     # Call history quick-access fields (from webhook)
     disposition: Optional[str] = "New"
     transcript: Optional[str] = ""
@@ -62,6 +68,9 @@ class LeadDetail(BaseModel):
     last_call_status: Optional[str] = ""
     last_call_duration: Optional[int] = 0
     last_recording_url: Optional[str] = ""
+
+    # Last call that produced unified structured extraction (debug / UI)
+    last_structured_call_sid: Optional[str] = ""
 
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None

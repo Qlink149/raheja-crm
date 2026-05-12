@@ -95,3 +95,36 @@ credentials.json
 *.pem
 *.key
 .credentials
+
+# Project Specific
+backend/.env
+backend/venv/
+backend/__pycache__/
+backend/scripts/checkpoints/
+backend/scratch/
+**/__pycache__/
+**/*.pyc
+
+# IDE and System
+.vscode/
+.idea/
+.DS_Store
+
+# Frontend build and dependencies
+frontend/node_modules/
+frontend/build/
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.test.local
+frontend/.env.production.local
+
+# Internal / Temporary folders
+.emergent/
+.gemini/
+artifact/
+memory/
+scratch/
+test_reports/
+tests/
+REPORTS/
+

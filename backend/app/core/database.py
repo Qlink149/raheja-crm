@@ -29,7 +29,15 @@ async def initialize_db():
     db = db_instance.db
     # Lead — identity indexes
     await db.leads.create_index("id", unique=True)
-    await db.leads.create_index("mobile_digits")
+    try:
+        await db.leads.create_index("mobile_digits", unique=True)
+    except Exception as e:
+        logger.warning(
+            "Could not ensure unique index on leads.mobile_digits (duplicate phones may exist; "
+            "run backend/scripts/dedupe_leads_by_mobile.py --execute): %s",
+            e,
+        )
+        await db.leads.create_index("mobile_digits")
     await db.leads.create_index("mobile")
     await db.leads.create_index("_seed_key")
     # Covers the OR-arm in the Futwork webhook lead lookup (futwork_lead_id).
@@ -41,6 +49,7 @@ async def initialize_db():
     await db.leads.create_index("budget_category")
     await db.leads.create_index("location_category")
     await db.leads.create_index("temperature")
+    await db.leads.create_index("qualification_category")
     await db.leads.create_index("intent_category")
     await db.leads.create_index("project")
     await db.leads.create_index("is_vip")

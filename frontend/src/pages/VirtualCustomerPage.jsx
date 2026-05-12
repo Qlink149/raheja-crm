@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
-import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Search,
   Filter,
@@ -15,31 +15,20 @@ import {
   Snowflake,
   Sun,
   Building2,
-  Upload,
-  Trash2,
-  FileSpreadsheet,
-  Loader2,
 } from "lucide-react";
 import { Input } from "../components/ui/input";
-import { Button } from "../components/ui/button";
 import { Badge } from "../components/ui/badge";
 import { ScrollArea } from "../components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "../components/ui/dialog";
 import Sidebar from "../components/Sidebar";
+import EmptyState from "../components/feedback/EmptyState";
+import { LeadGridSkeleton } from "../components/feedback/Skeletons";
 import { api } from "../lib/api";
 
-function FutworkSyncBadge({ status }) {
+function PlatformSyncBadge({ status }) {
   const s = (status || "pending").toLowerCase();
   if (s === "pushed") {
-    return (
-      <Badge
-        variant="outline"
-        className="border-emerald-500/30 bg-emerald-900/30 text-emerald-300 shrink-0"
-      >
-        Pushed to AI
-      </Badge>
-    );
+    return null; // Hide success state to reduce visual noise
   }
   if (s === "failed") {
     return (
@@ -61,8 +50,6 @@ function FutworkSyncBadge({ status }) {
 const VirtualCustomerPage = ({ onLogout, currentUser }) => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const fileInputRef = useRef(null);
-  
   const [leads, setLeads] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -70,9 +57,6 @@ const VirtualCustomerPage = ({ onLogout, currentUser }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [projects, setProjects] = useState([]);
-  const [uploading, setUploading] = useState(false);
-  const [showClearDialog, setShowClearDialog] = useState(false);
-  const [clearing, setClearing] = useState(false);
   const [page, setPage] = useState(0);
   const [hasMore, setHasMore] = useState(true);
   const sentinelRef = useRef(null);
@@ -85,6 +69,9 @@ const VirtualCustomerPage = ({ onLogout, currentUser }) => {
   const [vipFilter, setVipFilter] = useState(searchParams.get("vip") === "true");
   const [intentFilter, setIntentFilter] = useState(searchParams.get("intent") || "all");
   const [temperatureFilter, setTemperatureFilter] = useState(searchParams.get("temperature") || "all");
+  const [qualificationFilter, setQualificationFilter] = useState(
+    searchParams.get("qualification_category") || "all"
+  );
   const [projectFilter, setProjectFilter] = useState(searchParams.get("project") || "all");
 
   // Debounce search input 400ms
@@ -103,7 +90,16 @@ const VirtualCustomerPage = ({ onLogout, currentUser }) => {
     setPage(0);
     setHasMore(true);
     fetchLeads(0);
-  }, [budgetFilter, locationFilter, vipFilter, intentFilter, temperatureFilter, projectFilter, debouncedSearch]);
+  }, [
+    budgetFilter,
+    locationFilter,
+    vipFilter,
+    intentFilter,
+    temperatureFilter,
+    qualificationFilter,
+    projectFilter,
+    debouncedSearch,
+  ]);
 
   // Infinite scroll observer
   useEffect(() => {
@@ -128,6 +124,7 @@ const VirtualCustomerPage = ({ onLogout, currentUser }) => {
       setProjects(response.data);
     } catch (error) {
       console.error("Error fetching projects:", error);
+      toast.error("Couldn't load project list");
     }
   };
 
@@ -138,6 +135,8 @@ const VirtualCustomerPage = ({ onLogout, currentUser }) => {
     if (vipFilter) params.append("vip_only", "true");
     if (intentFilter !== "all") params.append("intent_category", intentFilter);
     if (temperatureFilter !== "all") params.append("temperature", temperatureFilter);
+    if (qualificationFilter !== "all")
+      params.append("qualification_category", qualificationFilter);
     if (projectFilter !== "all") params.append("project", projectFilter);
     if (debouncedSearch) params.append("search", debouncedSearch);
     params.append("skip", skip);
@@ -171,6 +170,7 @@ const VirtualCustomerPage = ({ onLogout, currentUser }) => {
       }
     } catch (error) {
       console.error("Error fetching leads:", error);
+      toast.error("Couldn't load leads. Try refreshing.");
       setLeads([]);
     } finally {
       setLoading(false);
@@ -190,52 +190,6 @@ const VirtualCustomerPage = ({ onLogout, currentUser }) => {
       console.error("Error loading more:", error);
     } finally {
       setLoadingMore(false);
-    }
-  };
-
-  const handleFileUpload = async (event) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    
-    if (!file.name.endsWith('.csv')) {
-      toast.error("Please upload a CSV file");
-      return;
-    }
-    
-    setUploading(true);
-    const formData = new FormData();
-    formData.append('file', file);
-    
-    try {
-      const response = await api.post("/leads/upload", formData);
-
-      toast.success(`Successfully uploaded ${response.data.count} leads`);
-      fetchLeads();
-      fetchProjects();
-    } catch (error) {
-      console.error("Upload error:", error);
-      toast.error(error.response?.data?.detail || "Failed to upload CSV");
-    } finally {
-      setUploading(false);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
-    }
-  };
-
-  const handleClearAllLeads = async () => {
-    setClearing(true);
-    try {
-      const response = await api.delete("/leads/clear");
-      toast.success(`Cleared ${response.data.deleted_count} leads`);
-      setShowClearDialog(false);
-      fetchLeads();
-      fetchProjects();
-    } catch (error) {
-      console.error("Clear error:", error);
-      toast.error("Failed to clear leads");
-    } finally {
-      setClearing(false);
     }
   };
 
@@ -318,6 +272,30 @@ const VirtualCustomerPage = ({ onLogout, currentUser }) => {
       default:
         return "";
     }
+  };
+
+  // ------ Budget display helpers ------
+  // Prefer the canonical `budget_category` bucket; fall back to a formatted
+  // numeric `budget` only when the bucket is empty or "Other". Keeps the
+  // API contract intact while showing the truthful classification.
+  const formatBudgetLabel = (lead) => {
+    const bucket = (lead?.budget_category || "").trim();
+    if (bucket && bucket !== "Other") return bucket;
+
+    const raw = lead?.budget;
+    if (raw == null || raw === "" || raw === "0" || raw === 0) {
+      return "Budget N/A";
+    }
+    const num = Number(raw);
+    if (Number.isFinite(num) && num > 0) {
+      return `₹${num} Cr`;
+    }
+    return String(raw);
+  };
+
+  const isHniBudget = (lead) => {
+    const bucket = (lead?.budget_category || "").trim();
+    return bucket === "5 Cr+" || bucket === "2-5 Cr";
   };
 
   const categories = [
@@ -526,53 +504,34 @@ const VirtualCustomerPage = ({ onLogout, currentUser }) => {
                   found
                 </span>
               </div>
-              
-              {/* CSV Upload Button */}
-              <input
-                type="file"
-                ref={fileInputRef}
-                onChange={handleFileUpload}
-                accept=".csv"
-                className="hidden"
-                data-testid="csv-file-input"
-              />
-              <Button
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploading}
-                className="bg-[#C5A059] text-black hover:bg-[#E5C585] flex items-center gap-2"
-                data-testid="upload-csv-btn"
-              >
-                {uploading ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Upload className="w-4 h-4" />
-                )}
-                {uploading ? "Uploading..." : "Upload CSV"}
-              </Button>
-              
-              {/* Clear All Button */}
-              <Button
-                onClick={() => setShowClearDialog(true)}
-                variant="outline"
-                className="border-red-500/30 text-red-400 hover:bg-red-900/20 hover:text-red-300 flex items-center gap-2"
-                data-testid="clear-all-btn"
-              >
-                <Trash2 className="w-4 h-4" />
-                Clear All
-              </Button>
             </motion.div>
 
             {/* Leads List */}
             <ScrollArea className="h-[calc(100vh-180px)]">
               {loading ? (
-                <div className="flex items-center justify-center h-64">
-                  <div className="w-8 h-8 border-2 border-[#C5A059] border-t-transparent rounded-full spinner" />
+                <div className="pr-4">
+                  <LeadGridSkeleton count={9} />
                 </div>
               ) : leads.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-64 text-[#525252]">
-                  <Users className="w-12 h-12 mb-4" />
-                  <p>No leads found matching your criteria</p>
-                </div>
+                <EmptyState
+                  icon={Users}
+                  title="No leads match your filters"
+                  description="Try widening your filters or upload a new CSV batch to bring in fresh leads."
+                  action={{
+                    label: "Reset filters",
+                    onClick: () => {
+                      setActiveCategory("all");
+                      setBudgetFilter("all");
+                      setLocationFilter("all");
+                      setVipFilter(false);
+                      setIntentFilter("all");
+                      setTemperatureFilter("all");
+                      setQualificationFilter("all");
+                      setProjectFilter("all");
+                      setSearchQuery("");
+                    },
+                  }}
+                />
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 pr-4">
                   {leads.map((lead) => (
@@ -580,13 +539,10 @@ const VirtualCustomerPage = ({ onLogout, currentUser }) => {
                       key={lead.id}
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
-                      transition={{ duration: 0.2 }}
+                      transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
                       onClick={() => navigate(`/customer/${lead.id}`)}
-                      className="glass-card rounded-lg p-5 cursor-pointer group"
-                      whileHover={{
-                        scale: 1.02,
-                        borderColor: "rgba(197, 160, 89, 0.5)",
-                      }}
+                      className="glass-card rounded-lg p-5 cursor-pointer group hover-lift"
+                      whileHover={{ scale: 1.01 }}
                       data-testid={`lead-card-${lead.id}`}
                     >
                       <div className="flex items-start gap-4">
@@ -617,11 +573,16 @@ const VirtualCustomerPage = ({ onLogout, currentUser }) => {
                               {getTemperatureIcon(lead.temperature)}
                               {lead.temperature}
                             </span>
-                            <FutworkSyncBadge status={lead.futwork_sync_status} />
-                            <span className="text-[#525252] text-xs whitespace-nowrap">
-                              {lead.budget !== "0" && lead.budget
-                                ? `${lead.budget} Cr`
-                                : "Budget N/A"}
+                            <PlatformSyncBadge status={lead.futwork_sync_status} />
+                            <span
+                              className={`text-xs whitespace-nowrap px-2 py-0.5 rounded-sm tabular-nums ${
+                                isHniBudget(lead)
+                                  ? "badge-hni font-semibold"
+                                  : "text-[#A3A3A3] bg-white/5 border border-white/5"
+                              }`}
+                              data-testid={`lead-budget-${lead.id}`}
+                            >
+                              {formatBudgetLabel(lead)}
                             </span>
                           </div>
                         </div>
@@ -634,14 +595,14 @@ const VirtualCustomerPage = ({ onLogout, currentUser }) => {
                       <div className="mt-4 pt-3 border-t border-white/5 flex items-center justify-between">
                         <span
                           className={`text-xs px-2 py-1 rounded ${
-                            lead.lead_status === "Qualified"
+                            lead.status === "Qualified"
                               ? "bg-emerald-900/30 text-emerald-300"
-                              : lead.lead_status === "Open"
+                              : lead.status === "Open"
                               ? "bg-[#C5A059]/20 text-[#C5A059]"
                               : "bg-red-900/30 text-red-300"
                           }`}
                         >
-                          {lead.lead_status}
+                          {lead.status || "—"}
                         </span>
                         <span className="text-[#525252] text-xs">
                           {lead.location_category}
@@ -666,44 +627,6 @@ const VirtualCustomerPage = ({ onLogout, currentUser }) => {
           </div>
         </div>
       </main>
-
-      {/* Clear Confirmation Dialog */}
-      <Dialog open={showClearDialog} onOpenChange={setShowClearDialog}>
-        <DialogContent className="bg-[#1A1A1A] border-white/10">
-          <DialogHeader>
-            <DialogTitle className="text-white flex items-center gap-2">
-              <Trash2 className="w-5 h-5 text-red-400" />
-              Clear All Leads
-            </DialogTitle>
-            <DialogDescription className="text-[#A3A3A3]">
-              Are you sure you want to remove all virtual customers from the database? 
-              This action cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="gap-2">
-            <Button
-              variant="outline"
-              onClick={() => setShowClearDialog(false)}
-              className="border-white/10 text-white hover:bg-white/5"
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={handleClearAllLeads}
-              disabled={clearing}
-              className="bg-red-600 text-white hover:bg-red-500"
-              data-testid="confirm-clear-btn"
-            >
-              {clearing ? (
-                <Loader2 className="w-4 h-4 animate-spin mr-2" />
-              ) : (
-                <Trash2 className="w-4 h-4 mr-2" />
-              )}
-              {clearing ? "Clearing..." : "Clear All"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 };

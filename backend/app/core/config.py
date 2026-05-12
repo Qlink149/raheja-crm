@@ -23,6 +23,9 @@ class Settings:
         os.environ.get("LEAD_UPLOAD_MAX_BYTES", str(10 * 1024 * 1024))  # 10 MiB
     )
 
+    # Cloudinary for CSV storage
+    CLOUDINARY_URL: str = os.environ.get("CLOUDINARY_URL", "").strip()
+
     ROOT_DIR: Path = ROOT_DIR
 
     @staticmethod
