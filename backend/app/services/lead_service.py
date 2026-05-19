@@ -1,3 +1,4 @@
+import re
 import uuid
 import httpx
 import logging
@@ -7,10 +8,11 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from ..models.lead import LeadDetail
 from ..utils.csv_processor import (
     process_row_to_lead,
-    generate_seed_key,
+    process_lead_upload_row,
     process_call_report_row_to_call_history_and_lead_patches,
 )
 from ..core.config import settings
+from .futwork_push import post_one_lead_to_futwork
 
 logger = logging.getLogger(__name__)
 
@@ -29,35 +31,17 @@ def _safe_row(row: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
-def _ten_digit_key_for_futwork(lead: Dict[str, Any]) -> str:
-    """Same normalization as push_to_futwork loop: last 10 digits for dedupe / push."""
-    raw_phone = (
-        lead.get("recipientPhoneNumber")
-        or lead.get("mobile_digits")
-        or lead.get("mobile", "")
-    )
-    db_digits = (lead.get("mobile_digits") or "").strip()
-    db_digits = "".join(c for c in db_digits if c.isdigit())[-10:]
-    if not raw_phone:
-        return db_digits if len(db_digits) == 10 else ""
-    phone = "".join(c for c in str(raw_phone) if c.isdigit())[-10:]
-    match_digits = phone if len(phone) == 10 else db_digits
-    if len(phone) == 10:
-        return phone
-    return match_digits if len(match_digits) == 10 else ""
-
-
 def _dedupe_leads_for_futwork(leads: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """One Futwork POST per 10-digit mobile; last row in upload order wins."""
-    by_digits: Dict[str, Dict[str, Any]] = {}
+    """One Futwork POST per client_lead_id; last row in upload order wins."""
+    by_client: Dict[str, Dict[str, Any]] = {}
     tail: List[Dict[str, Any]] = []
     for lead in leads:
-        key = _ten_digit_key_for_futwork(lead)
-        if len(key) == 10:
-            by_digits[key] = lead
+        cid = str(lead.get("client_lead_id") or "").strip()
+        if cid:
+            by_client[cid] = lead
         else:
             tail.append(lead)
-    return list(by_digits.values()) + tail
+    return list(by_client.values()) + tail
 
 
 class LeadService:
@@ -83,6 +67,7 @@ class LeadService:
                 {"last_name": {"$regex": esc, "$options": "i"}},
                 {"project": {"$regex": esc, "$options": "i"}},
                 {"mobile": {"$regex": esc, "$options": "i"}},
+                {"client_lead_id": {"$regex": esc, "$options": "i"}},
             ]
             if digits:
                 ors.append({"mobile_digits": {"$regex": digits}})
@@ -98,6 +83,41 @@ class LeadService:
                     continue
                 if key == "qualification_category":
                     other["qualification_category"] = value
+                    continue
+                if key == "upload_batch_id":
+                    other["upload_batch_id"] = value
+                    continue
+                if key == "disposition":
+                    other["disposition"] = {"$regex": f"^{re.escape(str(value))}$", "$options": "i"}
+                    continue
+                if key == "project":
+                    if str(value) == "__none__":
+                        other["$or"] = [
+                            {"project": {"$exists": False}},
+                            {"project": None},
+                            {"project": ""},
+                        ]
+                    else:
+                        other["project"] = {
+                            "$regex": f"^{re.escape(str(value))}$",
+                            "$options": "i",
+                        }
+                    continue
+                if key == "assigned_rep":
+                    esc = re.escape(str(value))
+                    other["$or"] = [
+                        {"assigned_to_name": {"$regex": f"^{esc}$", "$options": "i"}},
+                        {"assigned_to": {"$regex": f"^{esc}$", "$options": "i"}},
+                    ]
+                    continue
+                if key == "assigned_user_id":
+                    other["assigned_user_id"] = value
+                    continue
+                if key == "sales_qualification":
+                    other["sales_qualification"] = value
+                    continue
+                if key == "status":
+                    other["status"] = value
                     continue
                 if key == "is_vip" and value is True:
                     vip_expand = True
@@ -147,7 +167,14 @@ class LeadService:
         doc = await self.db.leads.find_one({"id": lead_id}, {"_id": 0})
         return doc
 
-    async def upsert_from_csv(self, rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    async def upsert_from_csv(
+        self,
+        rows: List[Dict[str, Any]],
+        *,
+        upload_batch_id: Optional[str] = None,
+        upload_batch_name: Optional[str] = None,
+        auto_assign_new: bool = True,
+    ) -> Dict[str, Any]:
         """Upsert leads from CSV rows.
 
         Returns:
@@ -172,7 +199,7 @@ class LeadService:
 
         for idx, row in enumerate(rows):
             try:
-                lead_data = process_row_to_lead(row)
+                lead_data = process_lead_upload_row(row)
             except Exception as e:
                 logger.warning("CSV row %s failed mapping: %s", idx, e)
                 failed_rows.append({
@@ -182,35 +209,52 @@ class LeadService:
                 })
                 continue
 
-            mobile_digits = lead_data.get("mobile_digits") or ""
-            if not mobile_digits:
+            client_lead_id = str(lead_data.get("client_lead_id") or "").strip()
+            if not client_lead_id:
                 failed_rows.append({
                     "row_index": idx,
-                    "reason": "missing or invalid phone number",
+                    "reason": "missing Lead ID (client_lead_id)",
                     "raw": _safe_row(row),
                 })
                 continue
 
             try:
-                seed_key = generate_seed_key(row)
-                lead_data["_seed_key"] = seed_key
-                lead_data["futwork_sync_status"] = "pending"
+                lead_data["external_id"] = client_lead_id
+                if upload_batch_id:
+                    lead_data["upload_batch_id"] = upload_batch_id
+                if upload_batch_name:
+                    lead_data["upload_batch_name"] = upload_batch_name
 
                 existing = await self.db.leads.find_one(
-                    {"_seed_key": seed_key}, {"_id": 1}
+                    {"client_lead_id": client_lead_id},
+                    {"_id": 1, "id": 1, "futwork_lead_id": 1},
                 )
 
                 if existing:
+                    patch = dict(lead_data)
+                    patch.pop("futwork_sync_status", None)
+                    if str(existing.get("futwork_lead_id") or "").strip():
+                        patch.pop("futwork_lead_id", None)
+                    patch["updated_at"] = datetime.utcnow()
                     await self.db.leads.update_one(
-                        {"_seed_key": seed_key},
-                        {"$set": lead_data},
+                        {"client_lead_id": client_lead_id},
+                        {"$set": patch},
                     )
                     updated_count += 1
                 else:
-                    lead_data["id"] = str(uuid.uuid4())
-                    lead_data["created_at"] = datetime.utcnow()
-                    await self.db.leads.insert_one(lead_data)
+                    doc = {
+                        **lead_data,
+                        "id": str(uuid.uuid4()),
+                        "futwork_sync_status": "pending",
+                        "created_at": datetime.utcnow(),
+                        "updated_at": datetime.utcnow(),
+                    }
+                    await self.db.leads.insert_one(doc)
                     new_count += 1
+                    if auto_assign_new:
+                        from .assignment_service import AssignmentService
+
+                        await AssignmentService(self.db).auto_assign_lead(doc["id"])
                 processed_count += 1
             except Exception as e:
                 logger.exception("CSV row %s failed upsert", idx)
@@ -308,12 +352,24 @@ class LeadService:
                 lead_update.pop("mobile_digits", None)
                 lead_update.pop("mobile", None)
                 if lead_update:
-                    res = await self.db.leads.update_one(
-                        {"mobile_digits": mobile_digits},
-                        {"$set": lead_update},
-                    )
-                    if res.matched_count:
-                        leads_updated += 1
+                    cid = str(
+                        lead_update.get("client_lead_id")
+                        or lead_update.get("external_id")
+                        or ""
+                    ).strip()
+                    flt: Optional[Dict[str, Any]] = None
+                    if cid:
+                        flt = {"client_lead_id": cid}
+                    elif mobile_digits:
+                        flt = {"mobile_digits": mobile_digits}
+                    if flt:
+                        lead_update.pop("futwork_lead_id", None)
+                        res = await self.db.leads.update_one(
+                            flt,
+                            {"$set": lead_update},
+                        )
+                        if res.matched_count:
+                            leads_updated += 1
 
                 processed += 1
             except Exception as e:
@@ -357,40 +413,18 @@ class LeadService:
                 {"$set": {"current_residential_location": src, "updated_at": datetime.utcnow()}},
             )
 
-    @staticmethod
-    def _extract_futwork_lead_id(body: Any) -> str:
-        """Best-effort scrape of the lead id Futwork returns after a successful push.
-
-        Their docs only specify the request body, so we accept several common
-        shapes: a flat object with `leadId` / `id` / `_id`, or a wrapper such
-        as `{ "data": { ... } }` / `{ "lead": { ... } }`.
-        """
-        if not isinstance(body, dict):
-            return ""
-        for key in ("leadId", "lead_id", "id", "_id"):
-            val = body.get(key)
-            if isinstance(val, str) and val.strip():
-                return val.strip()
-        for wrapper in ("data", "lead", "result"):
-            inner = body.get(wrapper)
-            if isinstance(inner, dict):
-                fid = LeadService._extract_futwork_lead_id(inner)
-                if fid:
-                    return fid
-        return ""
-
     async def apply_lead_futwork_sync(
         self,
         *,
-        mobile_digits_10: str,
+        client_lead_id: str,
         status: str,
         futwork_lead_id: Optional[str] = None,
         campaign_id: Optional[str] = None,
     ) -> None:
-        """Update futwork_sync_status (and optional ids) for a lead matched by 10-digit mobile."""
-        if len(mobile_digits_10) != 10:
+        """Update futwork_sync_status for a lead matched by client_lead_id only."""
+        cid = str(client_lead_id or "").strip()
+        if not cid:
             return
-        flt: Dict[str, Any] = {"mobile_digits": mobile_digits_10}
         doc: Dict[str, Any] = {
             "futwork_sync_status": status,
             "updated_at": datetime.utcnow(),
@@ -399,7 +433,35 @@ class LeadService:
             doc["futwork_lead_id"] = futwork_lead_id
         if campaign_id:
             doc["campaign_id"] = campaign_id
-        await self.db.leads.update_one(flt, {"$set": doc})
+        await self.db.leads.update_one({"client_lead_id": cid}, {"$set": doc})
+
+    async def leads_for_futwork_push_by_batch(
+        self,
+        upload_batch_id: str,
+        *,
+        include_repushed: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """
+        Load leads from DB for Futwork push after CSV upload.
+
+        By default only pending/failed sync rows are pushed (avoids duplicate
+        pushes on re-upload of already-pushed leads).
+        """
+        batch_id = (upload_batch_id or "").strip()
+        if not batch_id:
+            return []
+        query: Dict[str, Any] = {
+            "upload_batch_id": batch_id,
+            "client_lead_id": {"$exists": True, "$nin": ["", None]},
+        }
+        if not include_repushed:
+            query["$or"] = [
+                {"futwork_sync_status": {"$in": ["pending", "failed"]}},
+                {"futwork_sync_status": {"$exists": False}},
+                {"futwork_sync_status": None},
+            ]
+        cursor = self.db.leads.find(query, {"_id": 0})
+        return await cursor.to_list(length=50000)
 
     async def push_to_futwork(
         self,
@@ -430,123 +492,22 @@ class LeadService:
         n_in = len(leads)
         leads = _dedupe_leads_for_futwork(leads)
         if len(leads) != n_in:
-            logger.info("Futwork push: deduped %s -> %s leads by mobile", n_in, len(leads))
-
-        endpoint = (
-            f"https://platform.futwork.ai/api/campaigns/"
-            f"{settings.FUTWORK_CAMPAIGN_ID}/leads"
-        )
-        headers = {
-            "x-api-key": settings.FUTWORK_API_KEY,
-            "Content-Type": "application/json",
-        }
+            logger.info("Futwork push: deduped %s -> %s leads by client_lead_id", n_in, len(leads))
 
         pushed = 0
         failed = 0
         try:
             async with httpx.AsyncClient(timeout=30.0) as http_client:
                 for lead in leads:
-                    raw_phone = (
-                        lead.get("recipientPhoneNumber")
-                        or lead.get("mobile_digits")
-                        or lead.get("mobile", "")
+                    ok, _ = await post_one_lead_to_futwork(
+                        http_client,
+                        self.db,
+                        lead,
+                        campaign_id=campaign_id,
                     )
-                    db_digits = (lead.get("mobile_digits") or "").strip()
-                    db_digits = "".join(c for c in db_digits if c.isdigit())[-10:]
-
-                    if not raw_phone:
-                        if len(db_digits) == 10:
-                            await self.apply_lead_futwork_sync(
-                                mobile_digits_10=db_digits,
-                                status="failed",
-                                campaign_id=campaign_id,
-                            )
-                        failed += 1
-                        continue
-
-                    phone = "".join(c for c in str(raw_phone) if c.isdigit())[-10:]
-                    match_digits = phone if len(phone) == 10 else db_digits
-
-                    if len(phone) != 10:
-                        logger.warning(
-                            "Skipping lead due to invalid phone length: %s", phone
-                        )
-                        if len(match_digits) == 10:
-                            await self.apply_lead_futwork_sync(
-                                mobile_digits_10=match_digits,
-                                status="failed",
-                                campaign_id=campaign_id,
-                            )
-                        failed += 1
-                        continue
-
-                    name = (
-                        lead.get("customer_name")
-                        or lead.get("full_name")
-                        or "Unknown"
-                    )
-
-                    payload = {
-                        "recipientPhoneNumber": phone,
-                        "recipientData": {
-                            "customer_name": name,
-                        },
-                    }
-
-                    try:
-                        logger.info(
-                            "FUTWORK PUSH REQUEST | URL: %s | Payload: %s",
-                            endpoint,
-                            payload,
-                        )
-                        response = await http_client.post(
-                            endpoint, json=payload, headers=headers
-                        )
-                        logger.info(
-                            "FUTWORK PUSH RESPONSE | Status: %s | Body: %s",
-                            response.status_code,
-                            response.text,
-                        )
-                        response.raise_for_status()
+                    if ok:
                         pushed += 1
-
-                        try:
-                            body = response.json()
-                        except Exception:
-                            body = None
-                        futwork_lead_id = self._extract_futwork_lead_id(body)
-                        await self.apply_lead_futwork_sync(
-                            mobile_digits_10=phone,
-                            status="pushed",
-                            futwork_lead_id=futwork_lead_id or None,
-                            campaign_id=campaign_id,
-                        )
-                    except httpx.HTTPStatusError as e:
-                        logger.error(
-                            "Failed to push lead %s to Futwork | HTTPStatusError: %s | Response Body: %s",
-                            phone,
-                            e,
-                            e.response.text if e.response else "",
-                            exc_info=True,
-                        )
-                        await self.apply_lead_futwork_sync(
-                            mobile_digits_10=phone,
-                            status="failed",
-                            campaign_id=campaign_id,
-                        )
-                        failed += 1
-                    except Exception as e:
-                        logger.error(
-                            "Failed to push lead %s to Futwork: %s",
-                            phone,
-                            e,
-                            exc_info=True,
-                        )
-                        await self.apply_lead_futwork_sync(
-                            mobile_digits_10=phone,
-                            status="failed",
-                            campaign_id=campaign_id,
-                        )
+                    else:
                         failed += 1
 
             logger.info(

@@ -16,3 +16,4 @@ class DashboardStats(BaseModel):
     lead_source_stats: Dict[str, int]
     regional_demand: Dict[str, int]
     budget_distribution: Dict[str, int]
+    disposition_stats: Dict[str, int] = {}

@@ -1,0 +1,10 @@
+{
+  "default_password_env": "SEED_DEFAULT_PASSWORD",
+  "users": [
+    {
+      "email": "ravinder@rustomjee.com",
+      "full_name": "Ravinder",
+      "role": "admin"
+    }
+  ]
+}

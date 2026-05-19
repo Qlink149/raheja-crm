@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import { format } from "date-fns";
 import { toast } from "sonner";
@@ -16,7 +17,6 @@ import {
   ChevronDown,
   ChevronUp,
 } from "lucide-react";
-import Sidebar from "../components/Sidebar";
 import UploadLeadsModal from "../components/UploadLeadsModal";
 import LeadUploadDetailsModal from "../components/LeadUploadDetailsModal";
 import EmptyState from "../components/feedback/EmptyState";
@@ -65,7 +65,7 @@ function statusBadgeVariant(status) {
   return { className: "bg-white/10 text-[#A3A3A3] border-white/10", label: status || "Unknown" };
 }
 
-const CampaignsPage = ({ onLogout, currentUser }) => {
+const CampaignsPage = () => {
   const navigate = useNavigate();
 
   const [campaign, setCampaign] = useState(null);
@@ -226,6 +226,10 @@ const CampaignsPage = ({ onLogout, currentUser }) => {
       if (d.new != null) parts.push(`${d.new} new`);
       if (d.updated != null) parts.push(`${d.updated} updated`);
       if (d.unprocessed) parts.push(`${d.unprocessed} skipped`);
+      if (d.futwork_pushed != null) parts.push(`${d.futwork_pushed} synced to calling`);
+      if (d.futwork_failed != null && d.futwork_failed > 0) {
+        parts.push(`${d.futwork_failed} sync failed`);
+      }
       toast.success(
         parts.length ? `Upload complete: ${parts.join(", ")}` : "Upload complete"
       );
@@ -268,20 +272,17 @@ const CampaignsPage = ({ onLogout, currentUser }) => {
 
   if (loading) {
     return (
-      <div className="flex min-h-screen bg-[#0A0A0A]">
-        <Sidebar activePage="campaigns" onLogout={onLogout} currentUser={currentUser} />
-        <main className="flex-1 p-4 sm:p-6 lg:p-8 ml-20 lg:ml-64">
+      <motion.div className="space-y-8">
+
           <CampaignSkeleton />
-        </main>
-      </div>
+      </motion.div>
     );
   }
 
   if (error || !campaign) {
     return (
-      <div className="flex min-h-screen bg-[#0A0A0A]">
-        <Sidebar activePage="campaigns" onLogout={onLogout} currentUser={currentUser} />
-        <main className="flex-1 p-8 ml-20 lg:ml-64">
+      <motion.div className="space-y-8">
+
           <Card className="max-w-xl border-white/10 bg-[#141414] text-white">
             <CardHeader>
               <CardTitle className="text-lg">Campaign unavailable</CardTitle>
@@ -297,8 +298,7 @@ const CampaignsPage = ({ onLogout, currentUser }) => {
               </Button>
             </CardContent>
           </Card>
-        </main>
-      </div>
+      </motion.div>
     );
   }
 
@@ -309,13 +309,12 @@ const CampaignsPage = ({ onLogout, currentUser }) => {
 
   return (
     <TooltipProvider>
-      <div className="flex min-h-screen bg-[#0A0A0A]">
-        <Sidebar activePage="campaigns" onLogout={onLogout} currentUser={currentUser} />
+      <motion.div className="space-y-8">
 
-        <main className="flex-1 p-4 sm:p-6 lg:p-8 ml-20 lg:ml-64 space-y-6">
           {/* Header */}
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div>
+              <p className="text-[#C5A059] text-sm font-medium tracking-widest uppercase mb-2">Outreach</p>
               <div className="flex flex-wrap items-center gap-3">
                 <h1 className="font-serif text-2xl sm:text-3xl text-white tracking-tight">
                   {campaign.name || "Campaign"}
@@ -483,6 +482,12 @@ const CampaignsPage = ({ onLogout, currentUser }) => {
             </CardHeader>
             {uploadSectionOpen && (
               <CardContent className="space-y-4">
+                <p className="text-sm text-[#A3A3A3]">
+                  CSV columns: <span className="text-white">Lead ID</span>,{" "}
+                  <span className="text-white">Name</span>,{" "}
+                  <span className="text-white">Mobile</span> (flexible header names accepted).
+                  Each Lead ID is unique; the same mobile with different IDs creates separate leads.
+                </p>
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex flex-wrap items-center gap-2 text-sm text-[#A3A3A3]">
                     <Clock className="h-4 w-4 text-[#C5A059]" />
@@ -575,7 +580,17 @@ const CampaignsPage = ({ onLogout, currentUser }) => {
                           return (
                             <TableRow key={row.id} className="border-white/10 hover:bg-white/[0.02]">
                               <TableCell className="text-white font-medium max-w-[180px] truncate">
-                                {row.batch_name || row.filename || "—"}
+                                <button
+                                  type="button"
+                                  className="text-left hover:text-[#C5A059] underline-offset-2 hover:underline truncate max-w-full"
+                                  onClick={() =>
+                                    navigate(
+                                      `/virtual-customer?campaignId=${encodeURIComponent(row.id)}`
+                                    )
+                                  }
+                                >
+                                  {row.batch_name || row.filename || "—"}
+                                </button>
                               </TableCell>
                               <TableCell className="text-white font-medium">
                                 {tooltipLine ? (
@@ -646,8 +661,7 @@ const CampaignsPage = ({ onLogout, currentUser }) => {
             uploadId={detailsUploadId}
             onUpdated={fetchUploadHistory}
           />
-        </main>
-      </div>
+    </motion.div>
     </TooltipProvider>
   );
 };

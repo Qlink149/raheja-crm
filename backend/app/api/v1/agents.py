@@ -1,3 +1,11 @@
+"""
+AI agent prompt presets stored in MongoDB.
+
+NOT wired to Futwork outbound voice or OpenAI runtime in this application.
+Futwork campaign dialing uses the agent configured on the Futwork platform.
+These records are for future use or admin reference only.
+"""
+
 from fastapi import APIRouter, Depends
 from typing import List, Dict, Any
 from ...core.database import get_db

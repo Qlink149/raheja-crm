@@ -44,6 +44,142 @@ def mask_phone(raw: str) -> str:
     return f"******{last4}"
 
 
+INSIGHT_TRANSCRIPT_MAX_CHARS = 16000
+
+_INSIGHT_LEAD_WHITELIST = frozenset(
+    {
+        "full_name",
+        "project",
+        "location",
+        "budget",
+        "temperature",
+        "intent",
+        "configuration",
+        "bhk",
+        "disposition",
+        "lastCallSummary",
+        "presales_description",
+        "context_summary",
+        "budget_category",
+        "location_category",
+        "intent_category",
+        "qualification_category",
+        "is_vip",
+        "is_hni",
+        "vip_category",
+        "current_residence_location",
+        "current_residential_location",
+        "possession_requirement",
+        "reason_for_purchase",
+        "suggested_next_project",
+        "designation",
+        "carpet_area",
+        "ai_summary",
+        "ai_key_signals",
+        "ai_disposition",
+    }
+)
+
+_INSIGHT_LOW_SIGNAL_STRINGS = frozenset(
+    {
+        "",
+        "other",
+        "profiling in progress",
+        "unknown",
+        "not captured",
+    }
+)
+
+
+def _truncate_transcript(text: str, max_chars: int = INSIGHT_TRANSCRIPT_MAX_CHARS) -> str:
+    t = (text or "").strip()
+    if len(t) <= max_chars:
+        return t
+    omitted = len(t) - max_chars
+    return t[:max_chars] + f"\n\n[... transcript truncated, {omitted} chars omitted ...]"
+
+
+def _insight_value_is_meaningful(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return True
+    if isinstance(value, list):
+        return len(value) > 0
+    if isinstance(value, dict):
+        return len(value) > 0
+    s = str(value).strip()
+    if not s:
+        return False
+    if s.lower() in _INSIGHT_LOW_SIGNAL_STRINGS:
+        return False
+    return True
+
+
+def _lead_context_for_insight(lead: Dict[str, Any]) -> Dict[str, Any]:
+    """Slim CRM payload for persona/strategic insights — omits empty/default noise."""
+    out: Dict[str, Any] = {}
+    for key in _INSIGHT_LEAD_WHITELIST:
+        if key not in lead:
+            continue
+        value = lead[key]
+        if not _insight_value_is_meaningful(value):
+            continue
+        out[key] = value
+    return out
+
+
+def _call_context_for_insight(call_doc: Dict[str, Any]) -> Dict[str, Any]:
+    """Latest worthy call context: transcript (primary) plus optional structured extraction."""
+    transcript = _truncate_transcript((call_doc.get("transcript") or "").strip())
+    ctx: Dict[str, Any] = {
+        "call_id": call_doc.get("id") or call_doc.get("call_sid"),
+        "created_at": call_doc.get("created_at"),
+        "status": call_doc.get("status"),
+        "futwork_status": call_doc.get("futwork_status"),
+        "disposition": call_doc.get("disposition"),
+        "transcript": transcript,
+    }
+    se = call_doc.get("structured_extraction") or {}
+    if isinstance(se, dict) and int(se.get("schema_version") or 0) == 2:
+        extraction: Dict[str, Any] = {}
+        for key in (
+            "call_summary",
+            "key_signals",
+            "preferred_location",
+            "unit_configuration",
+            "disposition",
+        ):
+            val = se.get(key)
+            if _insight_value_is_meaningful(val):
+                extraction[key] = val
+        if extraction:
+            ctx["structured_extraction"] = extraction
+    return {k: v for k, v in ctx.items() if _insight_value_is_meaningful(v)}
+
+
+def _build_insight_user_content(
+    lead: Dict[str, Any],
+    prompt: str,
+    *,
+    worthy_call: Optional[Dict[str, Any]] = None,
+) -> str:
+    if worthy_call is not None:
+        lead_ctx = _lead_context_for_insight(lead)
+        call_ctx = _call_context_for_insight(worthy_call)
+        parts = [
+            "Lead Data (CRM — supplementary):\n"
+            + json.dumps(lead_ctx, default=str, ensure_ascii=False),
+            "Latest worthy call:\n" + json.dumps(call_ctx, default=str, ensure_ascii=False),
+            f"Task: {prompt}",
+        ]
+        return "\n\n".join(parts)
+    lead_clean = {k: v for k, v in lead.items() if not k.startswith("_") and k != "id"}
+    return f"Lead Data:\n{json.dumps(lead_clean, default=str)}\n\nTask: {prompt}"
+
+
 def worthy_call_gate(status_raw: str, transcript: str) -> Tuple[bool, List[str]]:
     """
     Strict gate: skip OpenAI if transcript < 50 chars, no User: turn, or terminal miss statuses.
@@ -399,7 +535,15 @@ class StructuredAIService:
                 return d
         return None
 
-    async def get_insight(self, lead_id: str, field: str, prompt: str, refresh: bool = False) -> str:
+    async def get_insight(
+        self,
+        lead_id: str,
+        field: str,
+        prompt: str,
+        refresh: bool = False,
+        *,
+        worthy_call: Optional[Dict[str, Any]] = None,
+    ) -> str:
         lead = await self.db.leads.find_one({"id": lead_id})
         if not lead:
             raise ValueError("Lead not found")
@@ -410,7 +554,7 @@ class StructuredAIService:
         client = get_openai_client()
         if not client:
             return "AI insights require an OpenAI API key. Please configure OPENAI_API_KEY in the backend .env file."
-        lead_clean = {k: v for k, v in lead.items() if not k.startswith("_") and k != "id"}
+        user_content = _build_insight_user_content(lead, prompt, worthy_call=worthy_call)
         try:
             response = await client.chat.completions.create(
                 model="gpt-4o",
@@ -425,7 +569,7 @@ class StructuredAIService:
                     },
                     {
                         "role": "user",
-                        "content": f"Lead Data:\n{json.dumps(lead_clean, default=str)}\n\nTask: {prompt}",
+                        "content": user_content,
                     },
                 ],
                 temperature=0.7,
@@ -443,7 +587,8 @@ class StructuredAIService:
         if not lead:
             raise ValueError("Lead not found")
 
-        if not await self._latest_worthy_call_doc_for_lead(lead):
+        worthy_call = await self._latest_worthy_call_doc_for_lead(lead)
+        if not worthy_call:
             await self.db.leads.update_one({"id": lead_id}, {"$set": {"aiPersonaSummary": PERSONA_INSUFFICIENT}})
             return PERSONA_INSUFFICIENT
 
@@ -451,20 +596,29 @@ class StructuredAIService:
         eff_refresh = refresh or had_insufficient
 
         prompt = (
-            "Generate a 1-2 sentence Buyer Profile. Stick STRICTLY to facts from the transcript. "
+            "Generate a 1-2 sentence Buyer Profile. Your primary source is "
+            "Latest worthy call → transcript; CRM fields are supplementary only. "
+            "Stick STRICTLY to facts from the transcript. "
             "Do NOT infer lifestyle or psychological motivations if they aren't explicitly mentioned. "
             "If the transcript is brief (e.g., just greetings), return exactly: "
             "\"Insufficient interaction to determine buyer persona.\" "
             "Use markdown bold (**text**) only for short labels drawn from explicit transcript facts."
         )
-        return await self.get_insight(lead_id, "aiPersonaSummary", prompt, refresh=eff_refresh)
+        return await self.get_insight(
+            lead_id,
+            "aiPersonaSummary",
+            prompt,
+            refresh=eff_refresh,
+            worthy_call=worthy_call,
+        )
 
     async def generate_strategic_move(self, lead_id: str, refresh: bool = False) -> str:
         lead = await self.db.leads.find_one({"id": lead_id})
         if not lead:
             raise ValueError("Lead not found")
 
-        if not await self._latest_worthy_call_doc_for_lead(lead):
+        worthy_call = await self._latest_worthy_call_doc_for_lead(lead)
+        if not worthy_call:
             await self.db.leads.update_one({"id": lead_id}, {"$set": {"strategicNextMove": STRATEGIC_INSUFFICIENT}})
             return STRATEGIC_INSUFFICIENT
 
@@ -473,12 +627,19 @@ class StructuredAIService:
 
         prompt = (
             "Suggest the single best strategic next move for the Rustomjee sales team to convert this lead. "
-            "Consider their temperature, budget, project interest, and last interaction. "
+            "Base your recommendation primarily on the call transcript and structured_extraction signals; "
+            "use CRM temperature, budget, and project interest only when they add concrete detail. "
             "Be specific and immediately actionable (e.g., 'Schedule a site visit to Urban Woods this weekend, "
             "emphasize the 2BHK corner unit under 2 Cr which fits their budget exactly.'). "
             "Use markdown bold (**text**) to highlight the key action."
         )
-        return await self.get_insight(lead_id, "strategicNextMove", prompt, refresh=eff_refresh)
+        return await self.get_insight(
+            lead_id,
+            "strategicNextMove",
+            prompt,
+            refresh=eff_refresh,
+            worthy_call=worthy_call,
+        )
 
     async def generate_call_summary_unified(
         self,
@@ -494,29 +655,13 @@ class StructuredAIService:
         customer_name = (lead.get("full_name") or "Unknown").strip() or "Unknown"
         phone = (lead.get("mobile") or "").strip() or mobile_digits
 
-        async def _fetch_call() -> Optional[Dict[str, Any]]:
-            if call_sid:
-                flt: Dict[str, Any] = {"id": call_sid}
-                if mobile_digits:
-                    flt["mobile_digits"] = mobile_digits
-                return await self.db.call_history.find_one(flt)
-            if not mobile_digits:
-                return None
-            docs = (
-                await self.db.call_history.find({"mobile_digits": mobile_digits})
-                .sort("created_at", -1)
-                .to_list(30)
-            )
-            for d in docs:
-                tr = (d.get("transcript") or "").strip()
-                st = str(d.get("futwork_status") or d.get("status") or "")
-                ok, _ = worthy_call_gate(st, tr)
-                norm = (d.get("status") or "").strip().lower()
-                if ok and norm in ("completed", "call-disconnected"):
-                    return d
-            return docs[0] if docs else None
-
-        doc = await _fetch_call()
+        if call_sid:
+            flt: Dict[str, Any] = {"id": call_sid}
+            if mobile_digits:
+                flt["mobile_digits"] = mobile_digits
+            doc = await self.db.call_history.find_one(flt)
+        else:
+            doc = await self._latest_worthy_call_doc_for_lead(lead)
         if not doc:
             return NOT_WORTHY_MESSAGE
 

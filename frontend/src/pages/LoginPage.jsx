@@ -1,241 +1,259 @@
-import { useState } from "react";
+import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Lock, User, Building2 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
-import { Button } from "../components/ui/button";
-import { Input } from "../components/ui/input";
+import { Eye, EyeOff, Building2 } from "lucide-react";
 
-// Authorised users. Passwords kept simple for this internal tool.
-const USERS = {
-  ravinder: { password: "rustomjee@123", name: "Ravinder", initials: "R" },
-  kishore: { password: "rustomjee@123", name: "Kishore", initials: "K" },
-  elton: { password: "rustomjee@123", name: "Elton", initials: "E" },
-  tejal: { password: "rustomjee@123", name: "Tejal", initials: "T" },
-};
+const RUSTOMJEE_LOGO =
+  "https://customer-assets.emergentagent.com/job_rustomjee-sales-hub/artifacts/qap04r7n_Rustomjee_logo-removebg-preview.png";
 
-const LoginPage = ({ onLogin }) => {
-  const [isLoading, setIsLoading] = useState(false);
-  const [showAnimation, setShowAnimation] = useState(false);
-  const [username, setUsername] = useState("ravinder");
+const LoginPage = () => {
+  const [email, setEmail] = useState("ravinder@rustomjee.com");
   const [password, setPassword] = useState("rustomjee@123");
-  const [welcomeName, setWelcomeName] = useState("Ravinder");
+  const [showPassword, setShowPassword] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [showTransition, setShowTransition] = useState(false);
+  const [error, setError] = useState("");
+  const { login } = useAuth();
+  const navigate = useNavigate();
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    const key = username.trim().toLowerCase();
-    const account = USERS[key];
-    if (!account || account.password !== password) {
-      toast.error("Invalid username or password");
-      return;
-    }
-    setWelcomeName(account.name);
+    setError("");
     setIsLoading(true);
-    setShowAnimation(true);
 
-    setTimeout(() => {
-      onLogin({
-        username: key,
-        name: account.name,
-        initials: account.initials,
-      });
-    }, 3000);
+    try {
+      const me = await login(email, password);
+      setShowTransition(true);
+      const dest = me?.role === "admin" ? "/dashboard" : "/my-dashboard";
+      setTimeout(() => {
+        navigate(dest, { replace: true });
+      }, 3000);
+    } catch (err) {
+      const detail = err.response?.data?.detail;
+      setError(typeof detail === "string" ? detail : "Invalid credentials");
+      toast.error("Login failed. Please check your credentials.");
+      setIsLoading(false);
+    }
+  };
+
+  const handleDemoLogin = async () => {
+    setEmail("ravinder@rustomjee.com");
+    setPassword("rustomjee@123");
+    setIsLoading(true);
+    setError("");
+
+    try {
+      const me = await login("ravinder@rustomjee.com", "rustomjee@123");
+      setShowTransition(true);
+      const dest = me?.role === "admin" ? "/dashboard" : "/my-dashboard";
+      setTimeout(() => {
+        navigate(dest, { replace: true });
+      }, 3000);
+    } catch (err) {
+      setError("Failed to login with demo account");
+      setIsLoading(false);
+    }
   };
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-[#0A0A0A]">
-      {/* Background Image with Skyline */}
+    <div className="min-h-screen relative overflow-hidden bg-[#0A0A0A]">
       <motion.div
         className="absolute inset-0 z-0"
-        initial={{ scale: 1.1, y: "10%" }}
-        animate={showAnimation ? { scale: 1.3, y: "-20%" } : { scale: 1, y: 0 }}
-        transition={{ duration: 3, ease: "easeInOut" }}
+        initial={{ scale: 1.1, y: 50 }}
+        animate={{ scale: 1, y: 0 }}
+        transition={{ duration: 2, ease: "easeOut" }}
       >
-        <div
+        <motion.div
           className="absolute inset-0 bg-cover bg-center"
           style={{
             backgroundImage: `url('https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?w=1920&q=80')`,
           }}
         />
-        <div className="absolute inset-0 bg-black/70" />
+        <div className="absolute inset-0 bg-gradient-to-t from-[#0A0A0A] via-[#0A0A0A]/70 to-transparent" />
       </motion.div>
 
-      {/* Animated Gold Lines */}
-      <div className="absolute inset-0 z-10 pointer-events-none overflow-hidden">
-        <motion.div
-          className="absolute top-0 left-1/4 w-px h-full bg-gradient-to-b from-transparent via-[#C5A059]/30 to-transparent"
-          animate={{ y: ["-100%", "100%"] }}
-          transition={{ duration: 8, repeat: Infinity, ease: "linear" }}
-        />
-        <motion.div
-          className="absolute top-0 right-1/3 w-px h-full bg-gradient-to-b from-transparent via-[#C5A059]/20 to-transparent"
-          animate={{ y: ["100%", "-100%"] }}
-          transition={{ duration: 10, repeat: Infinity, ease: "linear" }}
-        />
-      </div>
-
-      {/* Main Content */}
-      <AnimatePresence mode="wait">
-        {!showAnimation ? (
+      <AnimatePresence>
+        {showTransition && (
           <motion.div
-            key="login-form"
-            className="relative z-20 flex items-center justify-center min-h-screen px-4"
+            className="fixed inset-0 z-50 bg-[#0A0A0A] flex flex-col items-center justify-center"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            exit={{ opacity: 0, y: -50 }}
-            transition={{ duration: 0.5 }}
+            exit={{ opacity: 0 }}
           >
-            <motion.div
-              className="w-full max-w-md"
+            <motion.img
+              src={RUSTOMJEE_LOGO}
+              alt="Rustomjee"
+              className="h-16 mb-8 invert"
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.8, delay: 0.3 }}
-            >
-              {/* Logo Section */}
-              <div className="text-center mb-12">
-                <motion.div
-                  className="inline-flex items-center justify-center mb-6"
-                  whileHover={{ scale: 1.05 }}
-                  transition={{ duration: 0.3 }}
-                >
-                  <img 
-                    src="https://customer-assets.emergentagent.com/job_rustomjee-sales-hub/artifacts/qap04r7n_Rustomjee_logo-removebg-preview.png" 
-                    alt="Rustomjee" 
-                    className="h-20 w-auto invert"
-                  />
-                </motion.div>
-                <p className="text-[#C5A059] text-sm tracking-[0.3em] uppercase font-medium">
-                  Sales Intelligence
-                </p>
-              </div>
-
-              {/* Login Card */}
+              transition={{ delay: 0.3 }}
+            />
+            <motion.div className="relative w-full max-w-2xl h-48 overflow-hidden">
               <motion.div
-                className="glass-card rounded-lg p-8"
-                whileHover={{ borderColor: "rgba(197, 160, 89, 0.4)" }}
+                className="absolute bottom-0 w-full flex justify-center gap-2"
+                initial={{ y: 200 }}
+                animate={{ y: 0 }}
+                transition={{ duration: 1.5, ease: "easeOut", delay: 0.5 }}
               >
-                <h2 className="font-serif text-2xl text-white text-center mb-2">
-                  Welcome Back
-                </h2>
-                <p className="text-[#A3A3A3] text-sm text-center mb-8">
-                  Access your command center
-                </p>
-
-                <form onSubmit={handleSubmit} className="space-y-6">
-                  <div className="space-y-2">
-                    <label className="text-xs uppercase tracking-widest text-[#C5A059] font-semibold">
-                      Username
-                    </label>
-                    <div className="relative">
-                      <User className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[#525252]" />
-                      <Input
-                        data-testid="login-username-input"
-                        type="text"
-                        placeholder="Enter your username"
-                        value={username}
-                        onChange={(e) => setUsername(e.target.value)}
-                        className="pl-12 bg-black/20 border-white/10 text-white placeholder:text-white/30 focus:border-[#C5A059] focus:ring-1 focus:ring-[#C5A059] rounded-sm h-12"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-xs uppercase tracking-widest text-[#C5A059] font-semibold">
-                      Password
-                    </label>
-                    <div className="relative">
-                      <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[#525252]" />
-                      <Input
-                        data-testid="login-password-input"
-                        type="password"
-                        placeholder="Enter your password"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        className="pl-12 bg-black/20 border-white/10 text-white placeholder:text-white/30 focus:border-[#C5A059] focus:ring-1 focus:ring-[#C5A059] rounded-sm h-12"
-                      />
-                    </div>
-                  </div>
-
-                  <Button
-                    data-testid="login-submit-btn"
-                    type="submit"
-                    disabled={isLoading}
-                    className="w-full bg-[#C5A059] text-black hover:bg-[#E5C585] font-semibold rounded-sm h-12 transition-all duration-300 hover:shadow-[0_0_15px_rgba(197,160,89,0.3)]"
-                  >
-                    {isLoading ? (
-                      <span className="flex items-center gap-2">
-                        <div className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full spinner" />
-                        Entering...
-                      </span>
-                    ) : (
-                      "Enter Command Center"
-                    )}
-                  </Button>
-                </form>
-
-                <p className="text-center text-[#525252] text-xs mt-6">
-                  Rustomjee Group &copy; 2026
-                </p>
+                {[...Array(12)].map((_, i) => (
+                  <motion.div
+                    key={i}
+                    className="bg-gradient-to-t from-[#C5A059] to-[#C5A059]/30"
+                    style={{
+                      width: "30px",
+                      height: `${60 + (i % 5) * 28}px`,
+                      borderRadius: "4px 4px 0 0",
+                    }}
+                    initial={{ y: 200 }}
+                    animate={{ y: 0 }}
+                    transition={{
+                      duration: 1.2,
+                      ease: "easeOut",
+                      delay: 0.5 + i * 0.1,
+                    }}
+                  />
+                ))}
               </motion.div>
             </motion.div>
-          </motion.div>
-        ) : (
-          <motion.div
-            key="animation"
-            className="relative z-20 flex items-center justify-center min-h-screen"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.5 }}
-          >
-            {/* Skyline Rising Animation */}
-            <div className="text-center">
+            <motion.div
+              className="mt-8 text-center"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 2 }}
+            >
+              <h1 className="font-serif text-3xl text-[#C5A059]">Welcome to Rustomjee</h1>
+              <p className="text-[#A1A1AA] mt-2">Sales Intelligence Dashboard</p>
+            </motion.div>
+            <motion.div
+              className="mt-8 h-1 w-48 bg-[#1A1A1A] rounded-full overflow-hidden"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 2 }}
+            >
               <motion.div
-                className="mb-8"
-                initial={{ opacity: 0, scale: 0.8 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ duration: 0.5 }}
-              >
-                <Building2 className="w-16 h-16 text-[#C5A059] mx-auto mb-4" strokeWidth={1} />
-              </motion.div>
-              
-              <motion.h2
-                className="font-serif text-3xl text-white mb-4"
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.3 }}
-              >
-                Welcome, {welcomeName}
-              </motion.h2>
-              
-              <motion.div
-                className="flex items-center justify-center gap-2"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ delay: 0.6 }}
-              >
-                <div className="w-2 h-2 rounded-full bg-[#C5A059] animate-pulse" />
-                <p className="text-[#A3A3A3] text-sm">
-                  Initializing Command Center...
-                </p>
-              </motion.div>
-
-              {/* Progress Bar */}
-              <motion.div
-                className="mt-8 w-64 mx-auto h-1 bg-[#1A1A1A] rounded-full overflow-hidden"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ delay: 0.8 }}
-              >
-                <motion.div
-                  className="h-full bg-gradient-to-r from-[#C5A059] to-[#E5C585]"
-                  initial={{ width: 0 }}
-                  animate={{ width: "100%" }}
-                  transition={{ duration: 2, delay: 0.8, ease: "easeInOut" }}
-                />
-              </motion.div>
-            </div>
+                className="h-full bg-[#C5A059]"
+                initial={{ width: "0%" }}
+                animate={{ width: "100%" }}
+                transition={{ duration: 1, delay: 2 }}
+              />
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
+
+      <div className="relative z-10 min-h-screen flex items-center justify-center px-4">
+        <motion.div
+          className="w-full max-w-md"
+          initial={{ opacity: 0, y: 30 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.8, delay: 0.5 }}
+        >
+          <motion.div
+            className="flex justify-center mb-8"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.8 }}
+          >
+            <img
+              src={RUSTOMJEE_LOGO}
+              alt="Rustomjee"
+              className="h-12 invert"
+              data-testid="login-logo"
+            />
+          </motion.div>
+
+          <motion.div
+            className="glass-card rounded-lg p-8"
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ delay: 1 }}
+          >
+            <div className="text-center mb-8">
+              <h1 className="font-serif text-2xl text-[#EDEDED]" data-testid="login-title">
+                Sales Intelligence
+              </h1>
+              <p className="text-[#A1A1AA] text-sm mt-2">Sign in to access your dashboard</p>
+            </div>
+
+            <form onSubmit={handleSubmit} className="space-y-6">
+              <div>
+                <label className="block text-sm text-[#A1A1AA] mb-2">Email Address</label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="w-full h-12 px-4 bg-black/50 border border-white/20 rounded-md text-white focus:border-[#C5A059] transition-colors"
+                  placeholder="ravinder@rustomjee.com"
+                  required
+                  data-testid="login-email-input"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm text-[#A1A1AA] mb-2">Password</label>
+                <div className="relative">
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full h-12 px-4 pr-12 bg-black/50 border border-white/20 rounded-md text-white focus:border-[#C5A059] transition-colors"
+                    placeholder="Enter your password"
+                    required
+                    data-testid="login-password-input"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-4 top-1/2 -translate-y-1/2 text-[#A1A1AA] hover:text-white transition-colors"
+                    data-testid="toggle-password-btn"
+                  >
+                    {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
+              </div>
+
+              {error && (
+                <motion.div
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="text-red-500 text-sm text-center"
+                  data-testid="login-error"
+                >
+                  {error}
+                </motion.div>
+              )}
+
+              <button
+                type="submit"
+                disabled={isLoading}
+                className="w-full h-12 btn-gold font-medium rounded-none disabled:opacity-50 disabled:cursor-not-allowed"
+                data-testid="login-submit-btn"
+              >
+                {isLoading ? "Signing in..." : "Sign In"}
+              </button>
+
+              <button
+                type="button"
+                onClick={handleDemoLogin}
+                disabled={isLoading}
+                className="w-full h-12 btn-gold-outline font-medium rounded-none disabled:opacity-50"
+                data-testid="demo-login-btn"
+              >
+                <span className="flex items-center justify-center gap-2">
+                  <Building2 size={18} />
+                  Demo Login as Ravinder
+                </span>
+              </button>
+            </form>
+
+            <p className="text-center text-[#52525B] text-xs mt-8">
+              Rustomjee — Sales Hub
+            </p>
+          </motion.div>
+        </motion.div>
+      </div>
     </div>
   );
 };

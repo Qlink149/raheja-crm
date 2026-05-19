@@ -8,14 +8,74 @@ import io
 from datetime import datetime
 from ...core.config import settings
 from ...core.database import get_db
+from ...core.rbac import require_admin
+from ...core.security import get_current_user
 from ...services.lead_service import LeadService
 from ...services.campaign_service import CampaignService
+from ...services.assignment_service import AssignmentService, rep_lead_filter
 from ...models.lead import LeadDetail
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _FAILURE_INSERT_CHUNK = 1000
+
+SALES_QUALIFICATION_VALUES = frozenset(
+    {"Cold Qualified", "Hot Lead", "VIP Pipeline"}
+)
+
+
+def _build_list_filters(
+    *,
+    budget_category=None,
+    location_category=None,
+    intent_category=None,
+    temperature=None,
+    qualification_category=None,
+    project=None,
+    vip_only=False,
+    campaign_id=None,
+    campaignId=None,
+    disposition=None,
+    status=None,
+    assigned_user_id=None,
+    assigned_rep=None,
+    sales_qualification=None,
+    futwork_sync_status=None,
+):
+    filters = {
+        "budget_category": budget_category,
+        "location_category": location_category,
+        "intent_category": intent_category,
+        "temperature": temperature,
+        "qualification_category": qualification_category,
+    }
+    if project and project != "all":
+        filters["project"] = project
+    if vip_only:
+        filters["is_vip"] = True
+    batch_id = campaignId or None
+    if batch_id:
+        filters["upload_batch_id"] = batch_id
+    elif campaign_id:
+        filters["campaign_id"] = campaign_id
+    if disposition:
+        filters["disposition"] = disposition
+    if status:
+        filters["status"] = status
+    if assigned_user_id:
+        filters["assigned_user_id"] = assigned_user_id
+    if sales_qualification:
+        filters["sales_qualification"] = sales_qualification
+    if assigned_rep:
+        filters["assigned_rep"] = assigned_rep
+    fw = (futwork_sync_status or "").strip().lower()
+    if fw and fw != "all":
+        filters["futwork_sync_status"] = futwork_sync_status
+    elif not futwork_sync_status:
+        filters["futwork_sync_status"] = {"$not": {"$eq": "failed"}}
+    return filters
+
 
 @router.get("", response_model=List[LeadDetail])
 async def list_leads(
@@ -30,28 +90,40 @@ async def list_leads(
     project: Optional[str] = None,
     vip_only: bool = False,
     campaign_id: Optional[str] = None,
+    campaignId: Optional[str] = None,
+    disposition: Optional[str] = None,
+    status: Optional[str] = None,
+    assigned_user_id: Optional[str] = None,
+    assigned_rep: Optional[str] = None,
+    sales_qualification: Optional[str] = None,
     futwork_sync_status: Optional[str] = None,
-    db = Depends(get_db)
+    current_user: dict = Depends(get_current_user),
+    db=Depends(get_db),
 ):
     service = LeadService(db)
-    filters = {
-        "budget_category": budget_category,
-        "location_category": location_category,
-        "intent_category": intent_category,
-        "temperature": temperature,
-        "qualification_category": qualification_category,
-        "project": project
-    }
-    if vip_only:
-        filters["is_vip"] = True
-    if campaign_id:
-        filters["campaign_id"] = campaign_id
-    if futwork_sync_status:
-        filters["futwork_sync_status"] = futwork_sync_status
-    else:
-        # Show all leads except those explicitly marked as failed
-        # ($not/$eq also matches documents where the field is absent)
-        filters["futwork_sync_status"] = {"$not": {"$eq": "failed"}}
+    filters = _build_list_filters(
+        budget_category=budget_category,
+        location_category=location_category,
+        intent_category=intent_category,
+        temperature=temperature,
+        qualification_category=qualification_category,
+        project=project,
+        vip_only=vip_only,
+        campaign_id=campaign_id,
+        campaignId=campaignId,
+        disposition=disposition,
+        status=status,
+        assigned_user_id=assigned_user_id,
+        assigned_rep=assigned_rep,
+        sales_qualification=sales_qualification,
+        futwork_sync_status=futwork_sync_status,
+    )
+    role = (current_user.get("role") or "sales").lower()
+    query = service._build_leads_query(search, filters)
+    if role == "sales":
+        rep_filter = rep_lead_filter(current_user["id"], current_user["full_name"])
+        query = {"$and": [query, rep_filter]} if query else rep_filter
+        return await service.get_leads(skip, limit, None, query)
 
     return await service.get_leads(skip, limit, search, filters)
 
@@ -67,29 +139,42 @@ async def get_leads_count(
     vip_only: bool = False,
     search: Optional[str] = None,
     campaign_id: Optional[str] = None,
+    campaignId: Optional[str] = None,
+    disposition: Optional[str] = None,
+    status: Optional[str] = None,
+    assigned_user_id: Optional[str] = None,
+    assigned_rep: Optional[str] = None,
+    sales_qualification: Optional[str] = None,
     futwork_sync_status: Optional[str] = None,
-    db = Depends(get_db)
+    current_user: dict = Depends(get_current_user),
+    db=Depends(get_db),
 ):
     service = LeadService(db)
-    filters = {
-        "budget_category": budget_category,
-        "location_category": location_category,
-        "intent_category": intent_category,
-        "temperature": temperature,
-        "qualification_category": qualification_category,
-        "project": project,
-    }
-    if vip_only:
-        filters["is_vip"] = True
-    if campaign_id:
-        filters["campaign_id"] = campaign_id
-    if futwork_sync_status:
-        filters["futwork_sync_status"] = futwork_sync_status
+    filters = _build_list_filters(
+        budget_category=budget_category,
+        location_category=location_category,
+        intent_category=intent_category,
+        temperature=temperature,
+        qualification_category=qualification_category,
+        project=project,
+        vip_only=vip_only,
+        campaign_id=campaign_id,
+        campaignId=campaignId,
+        disposition=disposition,
+        status=status,
+        assigned_user_id=assigned_user_id,
+        assigned_rep=assigned_rep,
+        sales_qualification=sales_qualification,
+        futwork_sync_status=futwork_sync_status,
+    )
+    role = (current_user.get("role") or "sales").lower()
+    query = service._build_leads_query(search, filters)
+    if role == "sales":
+        rep_filter = rep_lead_filter(current_user["id"], current_user["full_name"])
+        query = {"$and": [query, rep_filter]} if query else rep_filter
+        count = await service.count_leads(None, query)
     else:
-        # Show all leads except those explicitly marked as failed
-        filters["futwork_sync_status"] = {"$not": {"$eq": "failed"}}
-
-    count = await service.count_leads(search, filters)
+        count = await service.count_leads(search, filters)
     return {"count": count}
 
 
@@ -273,7 +358,12 @@ async def upload_leads(
         raise HTTPException(status_code=400, detail="CSV contains no data rows")
 
     service = LeadService(db)
-    result = await service.upsert_from_csv(rows)
+    result = await service.upsert_from_csv(
+        rows,
+        upload_batch_id=upload_id,
+        upload_batch_name=resolved_batch,
+        auto_assign_new=True,
+    )
 
     processed     = int(result.get("processed", 0) or 0)
     new_count     = int(result.get("new", 0) or 0)
@@ -314,8 +404,6 @@ async def upload_leads(
                 status_code=503,
                 detail="Futwork is not configured on the server (missing FUTWORK_API_KEY / FUTWORK_CAMPAIGN_ID).",
             )
-        from ...utils.csv_processor import process_row_to_lead
-        processed_leads = [process_row_to_lead(row) for row in rows]
         upload_campaign_id = None
         try:
             cs = CampaignService(db)
@@ -326,8 +414,9 @@ async def upload_leads(
             logger.exception(
                 "upload_leads: failed to resolve campaign for Futwork tagging",
             )
+        leads_to_push = await service.leads_for_futwork_push_by_batch(upload_id)
         pushed_count, failed_count = await service.push_to_futwork(
-            processed_leads,
+            leads_to_push,
             campaign_id=upload_campaign_id,
         )
         result["futwork_pushed"] = pushed_count
@@ -368,6 +457,77 @@ async def upload_leads(
         "futwork_pushed": pushed_count if push_to_futwork else 0,
         "futwork_failed": failed_count if push_to_futwork else 0,
     }
+
+
+@router.patch("/{lead_id}/assign")
+async def assign_lead(
+    lead_id: str,
+    payload: dict,
+    _admin: dict = Depends(require_admin),
+    db=Depends(get_db),
+):
+    assigned_user_id = payload.get("assigned_user_id")
+    if not assigned_user_id:
+        raise HTTPException(status_code=400, detail="assigned_user_id is required")
+    ok = await AssignmentService(db).assign_lead(lead_id, assigned_user_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Lead or user not found")
+    return {"status": "success", "lead_id": lead_id, "assigned_user_id": assigned_user_id}
+
+
+@router.post("/{lead_id}/auto-assign")
+async def auto_assign_lead(
+    lead_id: str,
+    _admin: dict = Depends(require_admin),
+    db=Depends(get_db),
+):
+    rep, message = await AssignmentService(db).auto_assign_lead(lead_id)
+    if not rep:
+        raise HTTPException(status_code=400, detail=message)
+    return {
+        "status": "success",
+        "assigned_to": rep.get("full_name"),
+        "assigned_user_id": rep.get("id"),
+        "active_leads": rep.get("active_leads", 0),
+        "message": message,
+    }
+
+
+@router.patch("/{lead_id}/sales-qualification")
+async def update_sales_qualification(
+    lead_id: str,
+    payload: dict,
+    current_user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    value = (payload.get("sales_qualification") or "").strip()
+    if value and value not in SALES_QUALIFICATION_VALUES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"sales_qualification must be one of: {', '.join(sorted(SALES_QUALIFICATION_VALUES))}",
+        )
+
+    lead = await db.leads.find_one({"id": lead_id}, {"_id": 0, "assigned_user_id": 1})
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    role = (current_user.get("role") or "sales").lower()
+    if role == "sales" and lead.get("assigned_user_id") != current_user["id"]:
+        raise HTTPException(status_code=403, detail="You can only qualify your assigned leads")
+
+    now = datetime.utcnow()
+    await db.leads.update_one(
+        {"id": lead_id},
+        {
+            "$set": {
+                "sales_qualification": value or None,
+                "sales_qualified_at": now if value else None,
+                "sales_qualified_by": current_user["id"] if value else None,
+                "updated_at": now,
+            }
+        },
+    )
+    return {"status": "success", "sales_qualification": value or None}
 
 
 @router.patch("/{lead_id}/disposition")

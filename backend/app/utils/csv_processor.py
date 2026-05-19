@@ -39,6 +39,11 @@ COLUMN_MAPPINGS = {
     # ---- Optional external correlation key from upload template ----
     'unique_identifier': 'external_id',
     'Unique Identifier': 'external_id',
+    # ---- Upload template (Lead ID, Name, Mobile) ----
+    'Lead ID': 'client_lead_id',
+    'Lead Id': 'client_lead_id',
+    'Name': 'full_name',
+    'name': 'full_name',
 }
 
 def normalize_phone(phone: str) -> str:
@@ -88,6 +93,132 @@ def get_intent_category(intent: str) -> str:
     if any(x in intent_lower for x in ['home', 'self', 'family', 'live', 'reside', 'end use']): return "Home Seeker"
     return "Other"
 
+def normalize_agent_name(name: str) -> str:
+    """Lowercase, collapse whitespace for agent name lookup keys."""
+    return re.sub(r"\s+", " ", str(name or "").strip().lower())
+
+
+def slugify_agent_email(full_name: str, domain: str = "rustomjee.com") -> str:
+    """Build placeholder email from presales agent display name."""
+    parts = re.sub(r"[^a-z0-9\s]", "", str(full_name or "").lower()).split()
+    local = ".".join(parts) if parts else "agent"
+    return f"{local}@{domain}"
+
+
+def build_phone_key(country_code: str, mobile_digits: str) -> str:
+    cc = re.sub(r"\D", "", str(country_code or ""))
+    md = str(mobile_digits or "").strip()
+    if cc and md:
+        return f"{cc}:{md}"
+    return ""
+
+
+def _clean_csv_cell(val: Any) -> str:
+    s = str(val or "").strip()
+    if s in ("-", "nan", "None", "NaN", ""):
+        return ""
+    return s
+
+
+def _cell(row: Dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        if key not in row:
+            continue
+        val = _clean_csv_cell(row.get(key))
+        if val:
+            return val
+    return ""
+
+
+def process_lead_upload_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Flexible CSV upload: minimal Lead ID + Name + Mobile, or full presales dump columns.
+    Requires client_lead_id; mobile is optional contact data only.
+    """
+    r = row or {}
+    client_lead_id = _cell(
+        r,
+        "Lead ID",
+        "Lead Id",
+        "lead_id",
+        "client_lead_id",
+    )
+    if not client_lead_id:
+        return {}
+
+    if _cell(r, "Presales Agent") or _cell(r, "Presales Last Call Attempt Status"):
+        return process_presales_dump_row(r)
+
+    raw_mobile = _cell(
+        r,
+        "Mobile Number",
+        "Mobile",
+        "Mobile 1",
+        "recipientPhoneNumber",
+    )
+    mobile_digits = normalize_phone(raw_mobile)
+    name = _cell(r, "Name", "Full Name", "Last Name", "customer_name")
+
+    lead: Dict[str, Any] = {
+        "client_lead_id": client_lead_id,
+        "external_id": client_lead_id,
+        "mobile": raw_mobile,
+        "mobile_digits": mobile_digits,
+        "project": _cell(r, "Project"),
+        "updated_at": datetime.utcnow(),
+    }
+    if name:
+        lead["full_name"] = name
+        if _cell(r, "Last Name") or r.get("Last Name") is not None:
+            lead["last_name"] = name
+    return lead
+
+
+def process_presales_dump_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Map Rustomjee presales lead dump CSV row to lead document fields.
+
+  Headers: Lead Id, Presales Agent, Last Name, Dialing Country 1,
+            Country Code 1, Mobile 1, Project, Presales Last Call Attempt Status
+    """
+    r = row or {}
+    client_lead_id = _clean_csv_cell(r.get("Lead Id"))
+    country = _clean_csv_cell(r.get("Dialing Country 1"))
+    country_code = re.sub(r"\D", "", _clean_csv_cell(r.get("Country Code 1")))
+    raw_mobile = _clean_csv_cell(r.get("Mobile 1"))
+    mobile_digits = normalize_phone(raw_mobile)
+    phone_key = build_phone_key(country_code, mobile_digits)
+
+    last_name = _clean_csv_cell(r.get("Last Name"))
+    project = _clean_csv_cell(r.get("Project"))
+    presales_status = _clean_csv_cell(r.get("Presales Last Call Attempt Status"))
+    agent_name = _clean_csv_cell(r.get("Presales Agent"))
+
+    mobile = raw_mobile
+    if country_code and mobile_digits and not raw_mobile.startswith("+"):
+        mobile = f"+{country_code}{mobile_digits}"
+
+    lead: Dict[str, Any] = {
+        "client_lead_id": client_lead_id,
+        "external_id": client_lead_id,
+        "country": country,
+        "country_code": country_code,
+        "mobile": mobile,
+        "mobile_digits": mobile_digits,
+        "phone_key": phone_key,
+        "project": project,
+        "last_name": last_name,
+        "presales_agent_name": agent_name,
+        "presales_status": presales_status,
+        "updated_at": datetime.utcnow(),
+    }
+
+    if last_name:
+        lead["full_name"] = last_name
+
+    return lead
+
+
 def generate_seed_key(row: Dict[str, Any]) -> str:
     """Generate a deterministic key for a CSV row to prevent duplicates."""
     name   = row.get('Full Name') or row.get('customer_name', '')
@@ -99,8 +230,19 @@ def generate_seed_key(row: Dict[str, Any]) -> str:
 def process_row_to_lead(row: Dict[str, Any]) -> Dict[str, Any]:
     """Map a CSV row to the Lead internal schema."""
     lead = {}
+    cid = _cell(row, "Lead ID", "Lead Id", "lead_id", "client_lead_id")
+    if cid:
+        lead["client_lead_id"] = cid
+        lead["external_id"] = cid
+    name = _cell(row, "Name", "Full Name", "customer_name")
+    if name:
+        lead["full_name"] = name
+
+    _skip_fields = frozenset({"client_lead_id", "external_id", "full_name"})
 
     for csv_col, model_field in COLUMN_MAPPINGS.items():
+        if model_field in _skip_fields:
+            continue
         # Specifically handle the two possible column names for residence location
         if model_field == 'current_residence_location':
             val = row.get('Current Residence Location') or row.get('Current Residential Location', "")
@@ -160,6 +302,9 @@ def process_row_to_lead(row: Dict[str, Any]) -> Dict[str, Any]:
     ):
         if lead.get(field) is None:
             lead[field] = ""
+
+    if lead.get("client_lead_id") and not lead.get("external_id"):
+        lead["external_id"] = lead["client_lead_id"]
 
     return lead
 
@@ -316,6 +461,7 @@ def process_call_report_row_to_call_history_and_lead_patches(
     external_id = str(r.get("contextDetails_recipientData_unique_identifier") or "").strip()
     if external_id:
         lead_set["external_id"] = external_id
+        lead_set["client_lead_id"] = external_id
     campaign_id = str(r.get("contextDetails_recipientData_campaignId") or "").strip()
     if campaign_id:
         lead_set["campaign_id"] = campaign_id

@@ -46,7 +46,13 @@ class LeadDetail(BaseModel):
 
     # External correlation keys (CSV `unique_identifier`, Futwork lead id)
     external_id: Optional[str] = ""
+    client_lead_id: Optional[str] = ""
     futwork_lead_id: Optional[str] = ""
+
+    # Contact locale (presales CSV: Dialing Country / Country Code)
+    country: Optional[str] = ""
+    country_code: Optional[str] = ""
+    phone_key: Optional[str] = ""
 
     # Futwork CSV/campaign push lifecycle: pending | pushed | failed
     futwork_sync_status: Optional[str] = "pending"
@@ -61,6 +67,21 @@ class LeadDetail(BaseModel):
     area_match: Optional[bool] = False
     timeline_match: Optional[bool] = False
     qualification_category: Optional[str] = ""
+
+    # Assignment (sales rep)
+    assigned_user_id: Optional[str] = ""
+    assigned_to: Optional[str] = ""
+    assigned_to_name: Optional[str] = ""
+    assigned_at: Optional[datetime] = None
+
+    # CSV upload batch (distinct from Futwork campaign_id)
+    upload_batch_id: Optional[str] = ""
+    upload_batch_name: Optional[str] = ""
+
+    # Rep qualification after call (distinct from AI qualification_category)
+    sales_qualification: Optional[str] = ""
+    sales_qualified_at: Optional[datetime] = None
+    sales_qualified_by: Optional[str] = ""
 
     # Call history quick-access fields (from webhook)
     disposition: Optional[str] = "New"

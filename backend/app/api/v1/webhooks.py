@@ -1,8 +1,7 @@
 import json
 import logging
-import uuid
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
@@ -15,6 +14,12 @@ from ...utils.campaign_stats import (
     map_futwork_raw_to_live_key,
 )
 from ...utils.csv_processor import normalize_phone
+from ...utils.webhook_lead import (
+    build_lead_lookup_clauses,
+    call_history_lead_id_value,
+    lead_lookup_filter,
+    lead_update_filter,
+)
 from ...services.structured_ai_service import (
     StructuredAIService,
     not_worthy_call_history_patch,
@@ -51,6 +56,48 @@ def _normalize_status(status_raw: str) -> str:
 def _as_dict(value: Any) -> Dict[str, Any]:
     """Return value if it's a dict, else an empty dict. Guards against malformed payloads."""
     return value if isinstance(value, dict) else {}
+
+
+async def _resolve_existing_lead(
+    db,
+    *,
+    webhook_futwork_id: str,
+    echo_client_id: str,
+    mobile_digits: str,
+) -> Optional[Dict[str, Any]]:
+    """Match lead by Futwork/client IDs, then single-match mobile_digits fallback."""
+    clauses = build_lead_lookup_clauses(webhook_futwork_id, echo_client_id)
+    flt = lead_lookup_filter(clauses)
+    existing_lead: Optional[Dict[str, Any]] = None
+    if flt:
+        existing_lead = await db.leads.find_one(
+            flt,
+            {
+                "id": 1,
+                "last_call_status_raw": 1,
+                "last_call_status": 1,
+                "futwork_lead_id": 1,
+            },
+        )
+    if not existing_lead and len(mobile_digits) >= 10:
+        matches = await db.leads.find(
+            {"mobile_digits": mobile_digits},
+            {
+                "id": 1,
+                "last_call_status_raw": 1,
+                "last_call_status": 1,
+                "futwork_lead_id": 1,
+            },
+        ).to_list(2)
+        if len(matches) == 1:
+            existing_lead = matches[0]
+        elif len(matches) > 1:
+            logger.warning(
+                "Futwork webhook: ambiguous mobile_digits match | digits=%s | count=%s",
+                mobile_digits,
+                len(matches),
+            )
+    return existing_lead
 
 
 def _safe_int(value: Any, default: int = 0) -> int:
@@ -149,17 +196,15 @@ async def futwork_webhook(
     raw_phone      = context.get("recipientPhoneNumber", "") or to_number
     recipient_data = _as_dict(context.get("recipientData"))
     customer_name  = recipient_data.get("customer_name", "Unknown")
+    echo_client_id = str(
+        recipient_data.get("leadId")
+        or recipient_data.get("unique_identifier")
+        or ""
+    ).strip()
+    webhook_futwork_id = str(lead_id or "").strip()
 
-    # ---- Normalize phone ----------------------------------------------------
+    # ---- Normalize phone (call_history only; not used to find lead doc) ----
     mobile_digits = normalize_phone(str(raw_phone))
-    if not mobile_digits:
-        logger.warning(
-            "Futwork webhook ignored: no phone | callSid=%s | status=%s | toNumber=%s",
-            call_sid,
-            status_raw,
-            to_number,
-        )
-        return {"status": "ignored", "reason": "no phone", "call_sid": call_sid}
 
     # ---- Resolve campaign name from campaignId ------------------------------
     campaign_name = ""
@@ -203,12 +248,26 @@ async def futwork_webhook(
             status_raw,
         )
 
+    # ---- Resolve lead before call_history upsert (internal lead_id on call row) ----
+    existing_lead = await _resolve_existing_lead(
+        db,
+        webhook_futwork_id=webhook_futwork_id,
+        echo_client_id=echo_client_id,
+        mobile_digits=mobile_digits,
+    )
+    lead_update_flt = lead_update_filter(existing_lead)
+    internal_lead_id = call_history_lead_id_value(
+        existing_lead,
+        echo_client_id=echo_client_id,
+        webhook_futwork_id=webhook_futwork_id,
+    )
+
     # ---- Build call_history $set fields (only value-bearing) ----------------
     call_status = _normalize_status(status_raw)
     set_fields: Dict[str, Any] = {
         "id":               call_sid,
         "call_sid":         call_sid,
-        "lead_id":          lead_id,
+        "lead_id":          internal_lead_id,
         "campaign_id":      campaign_id,
         "agent_id":         agent_id,
         "phone":            raw_phone,
@@ -221,6 +280,10 @@ async def futwork_webhook(
         "provider_call_id": provider_call_id,
         "updated_at":       datetime.utcnow(),
     }
+    if webhook_futwork_id:
+        set_fields["futwork_lead_id"] = webhook_futwork_id
+    if echo_client_id:
+        set_fields["client_lead_id"] = echo_client_id
     # Only regress futwork_status/status if we are NOT in a stale-intermediate
     # case (otherwise a delayed `in-progress` after `completed` would corrupt
     # the terminal record).
@@ -283,17 +346,7 @@ async def futwork_webhook(
                 live_delta,
             )
 
-    # ---- Update lead — respect terminal status ------------------------------
-    update_filter: Dict[str, Any] = {"mobile_digits": mobile_digits}
-    if lead_id:
-        update_filter = {
-            "$or": [{"futwork_lead_id": lead_id}, {"mobile_digits": mobile_digits}]
-        }
-
-    existing_lead = await db.leads.find_one(
-        update_filter,
-        {"last_call_status_raw": 1, "last_call_status": 1},
-    )
+    # ---- Update lead snapshot (existing_lead resolved above) ------------------
     prior_status_raw = (existing_lead or {}).get("last_call_status_raw") or (
         existing_lead or {}
     ).get("last_call_status", "") or ""
@@ -301,14 +354,14 @@ async def futwork_webhook(
     can_advance_lead   = incoming_terminal or not prev_lead_terminal
 
     lead_set: Dict[str, Any] = {
-        "mobile":        raw_phone,
-        "mobile_digits": mobile_digits,
-        "updated_at":    datetime.utcnow(),
+        "updated_at": datetime.utcnow(),
     }
-    # Backfill the indexed correlation key so the next webhook can match by
-    # futwork_lead_id directly instead of falling back to phone digits.
-    if lead_id:
-        lead_set["futwork_lead_id"] = lead_id
+    if raw_phone:
+        lead_set["mobile"] = raw_phone
+    if mobile_digits:
+        lead_set["mobile_digits"] = mobile_digits
+    if webhook_futwork_id:
+        lead_set["futwork_lead_id"] = webhook_futwork_id
     if customer_name and customer_name != "Unknown":
         lead_set["full_name"] = customer_name
 
@@ -331,20 +384,16 @@ async def futwork_webhook(
     if lead_set.get("current_residence_location") and not lead_set.get("current_residential_location"):
         lead_set["current_residential_location"] = lead_set.get("current_residence_location")
 
-    lead_result = await db.leads.update_one(
-        update_filter,
-        {
-            "$set": lead_set,
-            "$setOnInsert": {
-                "id": str(uuid.uuid4()),
-                "created_at": datetime.utcnow(),
-                "source": "Webhook Inbound",
-                "temperature": "Warm",
-                "futwork_sync_status": "pushed",
-            },
-        },
-        upsert=True,
-    )
+    lead_result = None
+    if lead_update_flt:
+        lead_result = await db.leads.update_one(lead_update_flt, {"$set": lead_set})
+    elif build_lead_lookup_clauses(webhook_futwork_id, echo_client_id) or mobile_digits:
+        logger.warning(
+            "Futwork webhook: no lead matched | futwork_lead_id=%s | client_lead_id=%s | callSid=%s",
+            webhook_futwork_id,
+            echo_client_id,
+            call_sid,
+        )
 
     # ---- Structured AI extraction (terminal webhooks only) ------------------
     unified_extraction = None
@@ -376,10 +425,19 @@ async def futwork_webhook(
                     {"id": call_sid},
                     {"$set": svc.to_db_call_history_patch_unified(unified_extraction)},
                 )
-                await db.leads.update_one(
-                    update_filter,
-                    {"$set": svc.to_db_lead_patch_unified(unified_extraction)},
-                )
+                if lead_update_flt:
+                    await db.leads.update_one(
+                        lead_update_flt,
+                        {
+                            "$set": svc.to_db_lead_patch_unified(unified_extraction),
+                            "$unset": {"aiPersonaSummary": "", "strategicNextMove": ""},
+                        },
+                    )
+                else:
+                    logger.warning(
+                        "Skipping lead AI patch (no matched lead) | callSid=%s",
+                        call_sid,
+                    )
         except Exception:
             logger.exception("Structured AI extraction failed | callSid=%s", call_sid)
 
@@ -427,7 +485,7 @@ async def futwork_webhook(
         status_raw,
         live_delta,
         can_advance_lead,
-        bool(lead_result.matched_count),
+        bool(lead_result and lead_result.matched_count),
     )
 
     return {
@@ -436,5 +494,5 @@ async def futwork_webhook(
         "phase": status_raw,
         "live_delta": live_delta,
         "lead_advanced": can_advance_lead,
-        "lead_matched": bool(lead_result.matched_count),
+        "lead_matched": bool(lead_result and lead_result.matched_count),
     }

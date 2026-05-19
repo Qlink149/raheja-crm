@@ -7,6 +7,16 @@ load_dotenv(ROOT_DIR / '.env')
 
 class Settings:
     PROJECT_NAME: str = "Rustomjee Sales Intelligence API"
+    SECRET_KEY: str = os.environ.get(
+        "SECRET_KEY", "rustomjee-secret-key-change-in-production"
+    )
+    JWT_ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(
+        os.environ.get("ACCESS_TOKEN_EXPIRE_MINUTES", "30")
+    )
+    REFRESH_TOKEN_EXPIRE_DAYS: int = int(
+        os.environ.get("REFRESH_TOKEN_EXPIRE_DAYS", "7")
+    )
     MONGO_URL: str = os.environ.get('MONGO_URL', '')
     DB_NAME: str = os.environ.get('DB_NAME', 'rustomjee_db')
     OPENAI_API_KEY: str = os.environ.get('OPENAI_API_KEY') or os.environ.get('EMERGENT_LLM_KEY', '')

@@ -1,8 +1,13 @@
 from fastapi import APIRouter, Depends, Query
-from typing import Optional, Any, Dict
+from typing import Optional, Any, Dict, List
 from datetime import datetime, timedelta
 from ...core.database import get_db
 from ...models.stats import DashboardStats
+from .analytics import (
+    _is_invalid_rep_name,
+    _merge_query_with_valid_projects,
+    _rep_name_expression,
+)
 
 router = APIRouter()
 
@@ -104,47 +109,14 @@ def _legacy_cold_match() -> Dict[str, Any]:
     }
 
 
-def _rescued_hot_from_dormant_qc() -> Dict[str, Any]:
-    """QC says Dormant but CRM temp Hot: count as Hot, not Dormant (unless Lost)."""
-    return {
-        "$and": [
-            {"qualification_category": "Dormant"},
-            {"temperature": "Hot"},
-            {"status": {"$ne": "Lost"}},
-        ]
-    }
-
-
-def _rescued_cold_from_dormant_qc() -> Dict[str, Any]:
-    """QC says Dormant but CRM temp Cold: count as Cold, not Dormant (unless Lost)."""
-    return {
-        "$and": [
-            {"qualification_category": "Dormant"},
-            {"temperature": "Cold"},
-            {"status": {"$ne": "Lost"}},
-        ]
-    }
-
-
 def _dormant_bucket_query(base: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Dormant: explicit QC Dormant unless CRM temp Hot/Cold (those go to Hot/Cold tiles),
-    or legacy Lost with missing QC. Never double-count temp Cold as Dormant.
+    Dormant: explicit QC Dormant or legacy Lost with missing QC.
     """
     return {
         **base,
         "$or": [
-            {
-                "$and": [
-                    {"qualification_category": "Dormant"},
-                    {
-                        "$or": [
-                            {"status": "Lost"},
-                            {"temperature": {"$nin": ["Hot", "Cold"]}},
-                        ]
-                    },
-                ]
-            },
+            {"qualification_category": "Dormant"},
             {"$and": [_missing_qualification_clause(), {"status": "Lost"}]},
         ],
     }
@@ -197,7 +169,6 @@ async def get_dashboard_stats(
             "$or": [
                 {"qualification_category": "Hot"},
                 {"$and": [_missing_qualification_clause(), _legacy_hot_match()]},
-                _rescued_hot_from_dormant_qc(),
             ],
         }
     )
@@ -207,7 +178,6 @@ async def get_dashboard_stats(
             "$or": [
                 {"qualification_category": "Cold"},
                 {"$and": [_missing_qualification_clause(), _legacy_cold_match()]},
-                _rescued_cold_from_dormant_qc(),
             ],
         }
     )
@@ -242,6 +212,43 @@ async def get_dashboard_stats(
     regional_demand = await get_distribution("location_category")
     budget_distribution = await get_distribution("budget_category")
 
+    disposition_pipeline = [
+        {"$match": base_query},
+        {
+            "$project": {
+                "disp": {
+                    "$cond": [
+                        {
+                            "$and": [
+                                {"$ne": ["$disposition", None]},
+                                {"$ne": ["$disposition", ""]},
+                                {"$ne": ["$disposition", "New"]},
+                            ]
+                        },
+                        "$disposition",
+                        {
+                            "$cond": [
+                                {
+                                    "$and": [
+                                        {"$ne": ["$ai_disposition", None]},
+                                        {"$ne": ["$ai_disposition", ""]},
+                                    ]
+                                },
+                                "$ai_disposition",
+                                "Other",
+                            ]
+                        },
+                    ]
+                }
+            }
+        },
+        {"$group": {"_id": "$disp", "count": {"$sum": 1}}},
+    ]
+    disp_rows = await db.leads.aggregate(disposition_pipeline).to_list(50)
+    disposition_stats = {
+        str(r["_id"]) if r["_id"] else "Other": r["count"] for r in disp_rows
+    }
+
     return {
         "total_leads": total_leads,
         "hot_leads": hot_leads,
@@ -257,15 +264,93 @@ async def get_dashboard_stats(
         "lead_source_stats": lead_source_stats,
         "regional_demand": regional_demand,
         "budget_distribution": budget_distribution,
+        "disposition_stats": disposition_stats,
     }
+
+
+def _date_filter_query(
+    project: Optional[str],
+    days: Optional[int],
+    start_date: Optional[str],
+    end_date: Optional[str],
+) -> Dict[str, Any]:
+    base_query: Dict[str, Any] = {}
+    if project and project != "all":
+        base_query["project"] = project
+    if days:
+        cutoff = datetime.utcnow() - timedelta(days=days)
+        base_query["created_at"] = {"$gte": cutoff}
+    elif start_date or end_date:
+        date_filter: Dict[str, Any] = {}
+        if start_date:
+            try:
+                date_filter["$gte"] = datetime.strptime(start_date, "%Y-%m-%d")
+            except ValueError:
+                pass
+        if end_date:
+            try:
+                date_filter["$lte"] = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
+            except ValueError:
+                pass
+        if date_filter:
+            base_query["created_at"] = date_filter
+    return base_query
+
+
+@router.get("/sales-owners")
+async def get_sales_owners(
+    project: Optional[str] = None,
+    days: Optional[int] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    db=Depends(get_db),
+):
+    """Top 10 presales agents by assigned lead count (same rep logic as Sales Dashboard)."""
+    base_query = _date_filter_query(project, days, start_date, end_date)
+    rep_expr = _rep_name_expression()
+    pipeline = [
+        {"$match": base_query},
+        {"$addFields": {"rep": rep_expr}},
+        {"$match": {"rep": {"$nin": ["Unassigned", None, ""]}}},
+        {"$group": {"_id": "$rep", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}},
+        {"$limit": 10},
+    ]
+    results = await db.leads.aggregate(pipeline).to_list(length=10)
+    out: List[Dict[str, Any]] = []
+    for r in results:
+        name = str(r["_id"] or "").strip()
+        if not name or _is_invalid_rep_name(name):
+            continue
+        out.append({"name": name, "count": int(r.get("count", 0))})
+    return out
 
 
 @router.get("/projects")
 async def get_top_projects(db=Depends(get_db)):
+    total_leads = await db.leads.count_documents({})
+    with_project = await db.leads.count_documents(_merge_query_with_valid_projects({}))
+
     pipeline = [
+        {"$match": _merge_query_with_valid_projects({})},
         {"$group": {"_id": "$project", "count": {"$sum": 1}}},
         {"$sort": {"count": -1}},
         {"$limit": 10},
         {"$project": {"name": "$_id", "count": 1, "_id": 0}},
     ]
-    return await db.leads.aggregate(pipeline).to_list(length=10)
+    raw = await db.leads.aggregate(pipeline).to_list(length=10)
+    projects = [
+        p
+        for p in raw
+        if p.get("name") and p.get("name") != "Profiling in Progress"
+    ]
+    top_sum = sum(int(p.get("count", 0)) for p in projects)
+    other_count = max(0, with_project - top_sum)
+
+    return {
+        "projects": projects,
+        "total_leads": total_leads,
+        "with_project": with_project,
+        "other_count": other_count,
+        "without_project": max(0, total_leads - with_project),
+    }

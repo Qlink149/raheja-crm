@@ -20,7 +20,6 @@ import { Input } from "../components/ui/input";
 import { Badge } from "../components/ui/badge";
 import { ScrollArea } from "../components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
-import Sidebar from "../components/Sidebar";
 import EmptyState from "../components/feedback/EmptyState";
 import { LeadGridSkeleton } from "../components/feedback/Skeletons";
 import { api } from "../lib/api";
@@ -47,7 +46,7 @@ function PlatformSyncBadge({ status }) {
   );
 }
 
-const VirtualCustomerPage = ({ onLogout, currentUser }) => {
+const VirtualCustomerPage = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [leads, setLeads] = useState([]);
@@ -73,6 +72,54 @@ const VirtualCustomerPage = ({ onLogout, currentUser }) => {
     searchParams.get("qualification_category") || "all"
   );
   const [projectFilter, setProjectFilter] = useState(searchParams.get("project") || "all");
+  const [campaignIdFilter, setCampaignIdFilter] = useState(
+    searchParams.get("campaignId") || searchParams.get("campaign") || "all"
+  );
+  const [dispositionFilter, setDispositionFilter] = useState(
+    searchParams.get("disposition") || "all"
+  );
+  const [statusFilter, setStatusFilter] = useState(searchParams.get("status") || "all");
+  const [assignedRepFilter, setAssignedRepFilter] = useState(
+    searchParams.get("assigned_rep") || "all"
+  );
+  const [futworkSyncFilter, setFutworkSyncFilter] = useState(() => {
+    const fromUrl = searchParams.get("futwork_sync_status");
+    if (fromUrl) return fromUrl;
+    if (searchParams.get("project") || searchParams.get("assigned_rep")) return "all";
+    return "pushed";
+  });
+
+  useEffect(() => {
+    if (searchParams.get("futwork_sync_status")) return;
+    const hasDrillDown = searchParams.get("project") || searchParams.get("assigned_rep");
+    if (!hasDrillDown) {
+      const next = new URLSearchParams(searchParams);
+      next.set("futwork_sync_status", "pushed");
+      setSearchParams(next, { replace: true });
+    }
+  }, []);
+
+  useEffect(() => {
+    setCampaignIdFilter(searchParams.get("campaignId") || searchParams.get("campaign") || "all");
+    setDispositionFilter(searchParams.get("disposition") || "all");
+    setStatusFilter(searchParams.get("status") || "all");
+    setProjectFilter(searchParams.get("project") || "all");
+    setQualificationFilter(searchParams.get("qualification_category") || "all");
+    setBudgetFilter(searchParams.get("budget") || "all");
+    setLocationFilter(searchParams.get("location") || "all");
+    setTemperatureFilter(searchParams.get("temperature") || "all");
+    setIntentFilter(searchParams.get("intent") || "all");
+    setVipFilter(searchParams.get("vip") === "true");
+    setAssignedRepFilter(searchParams.get("assigned_rep") || "all");
+    const fw = searchParams.get("futwork_sync_status");
+    if (fw) {
+      setFutworkSyncFilter(fw);
+    } else if (searchParams.get("project") || searchParams.get("assigned_rep")) {
+      setFutworkSyncFilter("all");
+    } else {
+      setFutworkSyncFilter("pushed");
+    }
+  }, [searchParams]);
 
   // Debounce search input 400ms
   useEffect(() => {
@@ -98,6 +145,11 @@ const VirtualCustomerPage = ({ onLogout, currentUser }) => {
     temperatureFilter,
     qualificationFilter,
     projectFilter,
+    campaignIdFilter,
+    dispositionFilter,
+    statusFilter,
+    assignedRepFilter,
+    futworkSyncFilter,
     debouncedSearch,
   ]);
 
@@ -138,7 +190,14 @@ const VirtualCustomerPage = ({ onLogout, currentUser }) => {
     if (qualificationFilter !== "all")
       params.append("qualification_category", qualificationFilter);
     if (projectFilter !== "all") params.append("project", projectFilter);
+    if (campaignIdFilter !== "all") params.append("campaignId", campaignIdFilter);
+    if (dispositionFilter !== "all") params.append("disposition", dispositionFilter);
+    if (statusFilter !== "all") params.append("status", statusFilter);
+    if (assignedRepFilter !== "all") params.append("assigned_rep", assignedRepFilter);
     if (debouncedSearch) params.append("search", debouncedSearch);
+    if (futworkSyncFilter && futworkSyncFilter !== "all") {
+      params.append("futwork_sync_status", futworkSyncFilter);
+    }
     params.append("skip", skip);
     params.append("limit", PAGE_SIZE);
     return params;
@@ -312,18 +371,76 @@ const VirtualCustomerPage = ({ onLogout, currentUser }) => {
   const intentOptions = ["all", "Investor", "Home Seeker"];
   const temperatureOptions = ["all", "Hot", "Warm", "Cold"];
 
-  return (
-    <div className="flex min-h-screen bg-[#0A0A0A]">
-      <Sidebar activePage="virtual-customer" onLogout={onLogout} currentUser={currentUser} />
+  const handleFutworkSyncChange = (value) => {
+    setFutworkSyncFilter(value);
+    const next = new URLSearchParams(searchParams);
+    if (value === "all") {
+      next.delete("futwork_sync_status");
+    } else {
+      next.set("futwork_sync_status", value);
+    }
+    setSearchParams(next, { replace: true });
+  };
 
-      {/* Main Content */}
-      <main className="flex-1 ml-20 lg:ml-64">
-        <div className="flex h-screen">
+  return (
+    <motion.div className="space-y-8">
+      <motion.div
+        initial={{ opacity: 0, y: -20 }}
+        animate={{ opacity: 1, y: 0 }}
+      >
+        <p className="text-[#C5A059] text-sm font-medium tracking-widest uppercase">Lead Explorer</p>
+        <h1 className="font-serif text-3xl text-white" data-testid="virtual-customer-title">
+          Virtual Customer Explorer
+        </h1>
+        <p className="text-[#A1A1AA] mt-1">
+          {totalCount > 0 ? `${totalCount.toLocaleString()} leads in pipeline` : "Browse and filter your lead pipeline"}
+        </p>
+        <motion.div className="mt-4 inline-flex rounded-lg border border-white/10 bg-[#141414] p-1">
+          <button
+            type="button"
+            data-testid="futwork-filter-pushed"
+            onClick={() => handleFutworkSyncChange("pushed")}
+            className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${
+              futworkSyncFilter === "pushed"
+                ? "bg-[#C5A059] text-black"
+                : "text-[#A3A3A3] hover:text-white"
+            }`}
+          >
+            Futwork Called
+          </button>
+          <button
+            type="button"
+            data-testid="futwork-filter-pending"
+            onClick={() => handleFutworkSyncChange("pending")}
+            className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${
+              futworkSyncFilter === "pending"
+                ? "bg-[#C5A059] text-black"
+                : "text-[#A3A3A3] hover:text-white"
+            }`}
+          >
+            Pending
+          </button>
+          <button
+            type="button"
+            data-testid="futwork-filter-all"
+            onClick={() => handleFutworkSyncChange("all")}
+            className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${
+              futworkSyncFilter === "all"
+                ? "bg-[#C5A059] text-black"
+                : "text-[#A3A3A3] hover:text-white"
+            }`}
+          >
+            All
+          </button>
+        </motion.div>
+      </motion.div>
+
+        <motion.div className="flex flex-col lg:flex-row min-h-[70vh] rounded-xl border border-white/10 overflow-hidden">
           {/* Category Panel */}
           <motion.div
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
-            className="w-72 border-r border-white/10 bg-[#0A0A0A] p-6"
+            className="w-full lg:w-72 border-b lg:border-b-0 lg:border-r border-white/10 bg-[#0A0A0A] p-6"
           >
             <h2 className="font-serif text-xl text-white mb-6">Categories</h2>
 
@@ -625,9 +742,8 @@ const VirtualCustomerPage = ({ onLogout, currentUser }) => {
               )}
             </ScrollArea>
           </div>
-        </div>
-      </main>
-    </div>
+        </motion.div>
+    </motion.div>
   );
 };
 

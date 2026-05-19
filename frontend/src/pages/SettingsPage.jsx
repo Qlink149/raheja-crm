@@ -8,8 +8,6 @@ import {
   Shield,
   Sparkles,
 } from "lucide-react";
-import Sidebar from "../components/Sidebar";
-
 const COMING_SOON = [
   {
     icon: UserCircle,
@@ -43,12 +41,10 @@ const COMING_SOON = [
   },
 ];
 
-const SettingsPage = ({ onLogout, currentUser }) => {
+const SettingsPage = () => {
   return (
-    <div className="flex min-h-screen bg-[#0A0A0A]">
-      <Sidebar activePage="settings" onLogout={onLogout} currentUser={currentUser} />
+    <motion.div className="space-y-8">
 
-      <main className="flex-1 ml-20 lg:ml-64 p-8">
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
@@ -136,8 +132,7 @@ const SettingsPage = ({ onLogout, currentUser }) => {
             Want a setting fast-tracked? Ping the team in #sales-tools.
           </p>
         </motion.div>
-      </main>
-    </div>
+    </motion.div>
   );
 };
 

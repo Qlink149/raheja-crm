@@ -18,14 +18,14 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 
 const TEMPLATE_HEADERS = [
-  { key: "recipientPhoneNumber", required: true },
-  { key: "customer_name", required: false },
-  { key: "unique_identifier", required: false },
+  { key: "Lead ID", required: true },
+  { key: "Name", required: false },
+  { key: "Mobile", required: false },
 ];
 
 const TEMPLATE_CSV =
-  "recipientPhoneNumber,customer_name,unique_identifier\n" +
-  "9999789877,Sample Customer,LEAD-001\n";
+  "Lead ID,Name,Mobile\n" +
+  "LEAD-001,Sample Customer,9999789877\n";
 
 const formatSize = (bytes) => {
   if (!bytes && bytes !== 0) return "";
@@ -304,11 +304,15 @@ const UploadLeadsModal = ({
                 <p className="font-semibold text-blue-200 mb-1">Important Note !</p>
                 <ul className="list-disc pl-5 space-y-1 text-blue-200/90">
                   <li>Only CSV file format is supported with a maximum of 20,000 rows.</li>
-                  <li>First row must contain column headers matching the template above.</li>
                   <li>
-                    All columns marked with an asterisk (<span className="text-red-400">*</span>)
-                    in the template are mandatory.
+                    First row must contain column headers. Aliases accepted (e.g. Lead Id,
+                    Mobile Number, Full Name).
                   </li>
+                  <li>
+                    <span className="text-red-400">Lead ID</span> is required and must be unique.
+                    Same mobile with different Lead IDs creates separate leads.
+                  </li>
+                  <li>Name and Mobile are optional; Mobile is required only for Futwork dial-out.</li>
                 </ul>
               </div>
             </div>

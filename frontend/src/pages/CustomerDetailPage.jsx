@@ -9,6 +9,7 @@ import {
   Crown,
   MapPin,
   Building2,
+  Building,
   Briefcase,
   Home,
   Calendar,
@@ -32,21 +33,38 @@ import {
 } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { ScrollArea } from "../components/ui/scroll-area";
-import Sidebar from "../components/Sidebar";
 import EmptyState from "../components/feedback/EmptyState";
 import { CustomerDetailSkeleton } from "../components/feedback/Skeletons";
 import { api } from "../lib/api";
+import { useAuth } from "../context/AuthContext";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../components/ui/select";
 
-const CustomerDetailPage = ({ onLogout, currentUser }) => {
+const SALES_QUALIFICATION_OPTIONS = ["Cold Qualified", "Hot Lead", "VIP Pipeline"];
+
+const CustomerDetailPage = () => {
   const navigate = useNavigate();
   const { id } = useParams();
+  const { isAdmin } = useAuth();
   const [lead, setLead] = useState(null);
   const [loading, setLoading] = useState(true);
   const [earliestCallMs, setEarliestCallMs] = useState(null);
+  const [salesReps, setSalesReps] = useState([]);
+  const [qualifying, setQualifying] = useState(false);
 
   useEffect(() => {
     fetchLeadDetail();
   }, [id]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    api.get("/users/sales-reps").then((r) => setSalesReps(r.data || [])).catch(() => {});
+  }, [isAdmin]);
 
   useEffect(() => {
     if (!id) return;
@@ -107,6 +125,42 @@ const CustomerDetailPage = ({ onLogout, currentUser }) => {
       return "Unknown Customer";
     }
     return lead.full_name;
+  };
+
+  const handleSalesQualification = async (value) => {
+    setQualifying(true);
+    try {
+      await api.patch(`/leads/${id}/sales-qualification`, {
+        sales_qualification: value === "none" ? "" : value,
+      });
+      setLead((prev) => ({
+        ...prev,
+        sales_qualification: value === "none" ? "" : value,
+      }));
+      toast.success("Lead qualification updated");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to update qualification");
+    } finally {
+      setQualifying(false);
+    }
+  };
+
+  const handleAssign = async (userId) => {
+    if (!userId || userId === "none") return;
+    try {
+      await api.patch(`/leads/${id}/assign`, { assigned_user_id: userId });
+      await fetchLeadDetail();
+      toast.success("Lead assigned");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Assignment failed");
+    }
+  };
+
+  const openAICalling = () => {
+    const phone = lead?.mobile_digits || lead?.mobile || "";
+    const params = new URLSearchParams({ leadId: id });
+    if (phone) params.set("phone", phone);
+    navigate(`/ai-calling?${params.toString()}`);
   };
 
   const handleWhatsAppClick = () => {
@@ -260,22 +314,19 @@ const CustomerDetailPage = ({ onLogout, currentUser }) => {
 
   if (loading) {
     return (
-      <div className="flex min-h-screen bg-[#0A0A0A]">
-        <Sidebar activePage="virtual-customer" onLogout={onLogout} currentUser={currentUser} />
-        <main className="flex-1 ml-20 lg:ml-64 p-6 overflow-auto">
+      <motion.div className="space-y-8">
+
           <div className="max-w-7xl mx-auto">
             <CustomerDetailSkeleton />
           </div>
-        </main>
-      </div>
+      </motion.div>
     );
   }
 
   if (!lead) {
     return (
-      <div className="flex min-h-screen bg-[#0A0A0A]">
-        <Sidebar activePage="virtual-customer" onLogout={onLogout} currentUser={currentUser} />
-        <main className="flex-1 ml-20 lg:ml-64 flex items-center justify-center p-8">
+      <motion.div className="space-y-8">
+
           <EmptyState
             icon={User}
             title="Customer not found"
@@ -286,32 +337,43 @@ const CustomerDetailPage = ({ onLogout, currentUser }) => {
               icon: ArrowLeft,
             }}
           />
-        </main>
-      </div>
+      </motion.div>
     );
   }
 
   return (
-    <div className="flex min-h-screen bg-[#0A0A0A]">
-      <Sidebar activePage="virtual-customer" onLogout={onLogout} currentUser={currentUser} />
+    <motion.div className="space-y-8">
 
-      <main className="flex-1 ml-20 lg:ml-64 p-6 overflow-auto">
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           className="max-w-7xl mx-auto"
         >
-          {/* Back Button */}
           <motion.button
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
             onClick={() => navigate("/virtual-customer")}
-            className="flex items-center gap-2 text-[#A3A3A3] hover:text-[#C5A059] mb-6 transition-colors"
+            className="flex items-center gap-2 text-[#A1A1AA] hover:text-white mb-4 transition-colors"
             data-testid="back-to-customers-btn"
           >
-            <ArrowLeft className="w-4 h-4" />
-            <span>Back to Customers</span>
+            <ArrowLeft size={18} />
+            Back to Explorer
           </motion.button>
+
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="relative rounded-xl overflow-hidden h-20 mb-6"
+          >
+            <div className="absolute inset-0 bg-gradient-to-r from-[#0A0A0A] via-[#1A1A1A] to-[#C5A059]/20" />
+            <div className="relative z-10 h-full flex items-center px-6">
+              <Building className="text-[#C5A059] mr-4" size={24} />
+              <div>
+                <p className="text-[#C5A059] font-serif text-lg">{lead.project || "No Project Assigned"}</p>
+                <p className="text-[#52525B] text-xs">{lead.source || "Direct"} · {lead.status || "Inquiry"}</p>
+              </div>
+            </div>
+          </motion.div>
 
           {/* Hero Section */}
           <motion.div
@@ -366,7 +428,63 @@ const CustomerDetailPage = ({ onLogout, currentUser }) => {
                       <Phone className="w-4 h-4" />
                       Trigger AI Call
                     </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={openAICalling}
+                      className="border-white/20 text-white hover:bg-white/10"
+                    >
+                      <History className="w-4 h-4 mr-2" />
+                      AI Calling
+                    </Button>
                   </div>
+                </div>
+
+                <div className="flex flex-wrap gap-4 mb-6 items-end">
+                  <div className="min-w-[200px]">
+                    <p className="text-xs text-[#525252] mb-1">Sales qualification</p>
+                    <Select
+                      value={lead.sales_qualification || "none"}
+                      onValueChange={handleSalesQualification}
+                      disabled={qualifying}
+                    >
+                      <SelectTrigger className="bg-black/30 border-white/10 text-white">
+                        <SelectValue placeholder="Not qualified" />
+                      </SelectTrigger>
+                      <SelectContent className="bg-[#1A1A1A] border-white/10">
+                        <SelectItem value="none">Not set</SelectItem>
+                        {SALES_QUALIFICATION_OPTIONS.map((opt) => (
+                          <SelectItem key={opt} value={opt}>
+                            {opt}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {isAdmin && (
+                    <div className="min-w-[200px]">
+                      <p className="text-xs text-[#525252] mb-1">Assigned to</p>
+                      <Select
+                        value={lead.assigned_user_id || "none"}
+                        onValueChange={handleAssign}
+                      >
+                        <SelectTrigger className="bg-black/30 border-white/10 text-white">
+                          <SelectValue placeholder="Unassigned" />
+                        </SelectTrigger>
+                        <SelectContent className="bg-[#1A1A1A] border-white/10">
+                          <SelectItem value="none">Unassigned</SelectItem>
+                          {salesReps.map((rep) => (
+                            <SelectItem key={rep.id} value={rep.id}>
+                              {rep.full_name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                  {!isAdmin && lead.assigned_to && (
+                    <p className="text-sm text-[#A3A3A3]">Assigned to: {lead.assigned_to}</p>
+                  )}
                 </div>
 
                 {/* Quick Info Grid */}
@@ -455,7 +573,7 @@ const CustomerDetailPage = ({ onLogout, currentUser }) => {
                 icon={Sparkles}
                 title="AI Persona Summary"
                 cachedValue={lead.aiPersonaSummary}
-                fallback={lead.transcript ? "" : "Transcript unavailable or insufficient data for analysis."}
+                fallback=""
                 endpoint={`/leads/${id}/persona-summary`}
                 fieldKey="summary"
                 isMarkdown
@@ -467,7 +585,7 @@ const CustomerDetailPage = ({ onLogout, currentUser }) => {
                 icon={Target}
                 title="Strategic Next Move"
                 cachedValue={lead.strategicNextMove}
-                fallback={(lead.transcript || lead.project || lead.disposition) ? "" : "Insufficient data to generate a strategic recommendation."}
+                fallback=""
                 endpoint={`/leads/${id}/strategic-next-move`}
                 fieldKey="recommendation"
                 highlight
@@ -594,8 +712,7 @@ const CustomerDetailPage = ({ onLogout, currentUser }) => {
             </motion.div>
           </div>
         </motion.div>
-      </main>
-    </div>
+    </motion.div>
   );
 };
 

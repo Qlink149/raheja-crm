@@ -21,8 +21,90 @@ function normalizeNewlines(raw) {
  * Speaker label at line start (leading whitespace allowed).
  * English dialer labels + Hindi customer labels; body may be any Unicode.
  */
-const SPEAKER_LINE_RE =
+export const SPEAKER_LINE_RE =
   /^\s*(User|Customer|Assistant|AI\s*Agent|Futwork\s*Agent|Agent|System|Bot|ग्राहक|यूज़र|उपयोगकर्ता)\s*:\s*(.*)$/su;
+
+/** @typedef {'normal' | 'swapped' | 'unknown'} TranscriptSpeakerMode */
+
+const AGENT_BODY_PATTERNS = [
+  /मैं\s+प्रिया/i,
+  /\bpriya\b/i,
+  /रुस्तम\s*जी/i,
+  /\brustomjee\b/i,
+  /क्या\s+मैं\s+.+\s+से\s+बात\s+कर\s+रही\s+हूं/i,
+  /देखिए\s+आपने\s+पहले\s+रुस्तम/i,
+  /रुस्तम\s*जी\s*डेवलपर्स/i,
+];
+
+export function normalizeSpeakerLabel(labelRaw) {
+  const trimmed = String(labelRaw ?? "").trim();
+  if (/[\u0900-\u097F]/.test(trimmed)) {
+    return trimmed.replace(/\s+/g, "");
+  }
+  return trimmed.toLowerCase().replace(/\s+/g, "");
+}
+
+export function isCustomerSideLabel(norm) {
+  return (
+    norm === "user" ||
+    norm === "customer" ||
+    norm === "ग्राहक" ||
+    norm === "यूज़र" ||
+    norm === "उपयोगकर्ता"
+  );
+}
+
+export function isAgentSideLabel(norm) {
+  return (
+    norm === "assistant" ||
+    norm === "agent" ||
+    norm === "bot" ||
+    norm === "system" ||
+    norm === "futworkagent" ||
+    norm === "aiagent"
+  );
+}
+
+/**
+ * Outbound Voice AI speaks first; first labeled line identifies vendor label mapping.
+ * @param {string[]} lines
+ * @returns {TranscriptSpeakerMode}
+ */
+export function detectTranscriptSpeakerMode(lines) {
+  for (const rawLine of lines) {
+    const m = rawLine.match(SPEAKER_LINE_RE);
+    if (!m) continue;
+    const norm = normalizeSpeakerLabel(m[1] || "");
+    if (isCustomerSideLabel(norm)) return "swapped";
+    if (isAgentSideLabel(norm)) return "normal";
+    return "normal";
+  }
+  return "normal";
+}
+
+/**
+ * @param {string} norm
+ * @param {TranscriptSpeakerMode} mode
+ * @returns {boolean}
+ */
+export function labelToIsCustomer(norm, mode) {
+  const customer = isCustomerSideLabel(norm);
+  const agent = isAgentSideLabel(norm);
+  if (mode === "swapped") {
+    if (customer) return false;
+    if (agent) return true;
+    return false;
+  }
+  if (customer) return true;
+  if (agent) return false;
+  return false;
+}
+
+export function bodyIndicatesAgent(text) {
+  const t = String(text ?? "").trim();
+  if (!t) return false;
+  return AGENT_BODY_PATTERNS.some((re) => re.test(t));
+}
 
 /**
  * Parse a call transcript into ordered turns; continuation lines merge into the current turn.
@@ -31,24 +113,17 @@ const SPEAKER_LINE_RE =
 export function parseCallTranscriptTurns(raw) {
   const text = whitelabelAgentText(normalizeNewlines(raw));
   const lines = text.split("\n");
+  const mode = detectTranscriptSpeakerMode(lines);
   /** @type {{ isUser: boolean, body: string[] }[]} */
   const turns = [];
   let cur = null;
 
-  const isUserLabel = (norm) =>
-    norm === "user" ||
-    norm === "customer" ||
-    norm === "ग्राहक" ||
-    norm === "यूज़र" ||
-    norm === "उपयोगकर्ता";
-
   for (const rawLine of lines) {
     const m = rawLine.match(SPEAKER_LINE_RE);
     if (m) {
-      const labelRaw = m[1] || "";
-      const norm = labelRaw.toLowerCase().replace(/\s+/g, "");
+      const norm = normalizeSpeakerLabel(m[1] || "");
       const body = (m[2] ?? "").replace(/\s+$/u, "");
-      const isUser = isUserLabel(norm);
+      let isUser = labelToIsCustomer(norm, mode);
       cur = { isUser, body: [body] };
       turns.push(cur);
     } else if (cur) {
@@ -60,9 +135,13 @@ export function parseCallTranscriptTurns(raw) {
   }
 
   return turns
-    .map((t) => ({
-      isUser: t.isUser,
-      text: t.body.join("\n").trim(),
-    }))
+    .map((t) => {
+      let isUser = t.isUser;
+      const joined = t.body.join("\n").trim();
+      if (bodyIndicatesAgent(joined)) {
+        isUser = false;
+      }
+      return { isUser, text: joined };
+    })
     .filter((t) => t.text);
 }

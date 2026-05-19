@@ -11,6 +11,7 @@ from ..utils.campaign_stats import (
 )
 from ..models.campaign import CampaignCurrentResponse, LiveLeadStatus
 from .lead_service import LeadService
+from .futwork_push import post_one_lead_to_futwork
 
 logger = logging.getLogger(__name__)
 
@@ -228,94 +229,13 @@ class CampaignService:
         campaign_id: Optional[str] = None,
     ) -> bool:
         """POST one lead to Futwork. Updates Mongo futwork_sync_status. Returns True on HTTP success."""
-        ls = LeadService(self.db)
-        endpoint = (
-            f"https://platform.futwork.ai/api/campaigns/"
-            f"{settings.FUTWORK_CAMPAIGN_ID}/leads"
+        ok, _ = await post_one_lead_to_futwork(
+            http_client,
+            self.db,
+            lead,
+            campaign_id=campaign_id,
         )
-        headers = {
-            "x-api-key": settings.FUTWORK_API_KEY,
-            "Content-Type": "application/json",
-        }
-        raw_phone = lead.get("mobile_digits") or lead.get("mobile", "")
-        db_digits = "".join(c for c in str(lead.get("mobile_digits") or "") if c.isdigit())[
-            -10:
-        ]
-
-        if not (raw_phone or "").strip():
-            if len(db_digits) == 10:
-                await ls.apply_lead_futwork_sync(
-                    mobile_digits_10=db_digits,
-                    status="failed",
-                    campaign_id=campaign_id,
-                )
-            return False
-
-        phone = "".join(c for c in str(raw_phone) if c.isdigit())[-10:]
-        match_digits = phone if len(phone) == 10 else db_digits
-
-        if len(phone) != 10:
-            logger.warning(
-                "Skipping lead %s due to invalid phone: %s",
-                lead.get("full_name"),
-                phone,
-            )
-            if len(match_digits) == 10:
-                await ls.apply_lead_futwork_sync(
-                    mobile_digits_10=match_digits,
-                    status="failed",
-                    campaign_id=campaign_id,
-                )
-            return False
-
-        payload = {
-            "recipientPhoneNumber": phone,
-            "recipientData": {
-                "customer_name": lead.get("full_name", "Unknown"),
-            },
-        }
-
-        try:
-            response = await http_client.post(endpoint, json=payload, headers=headers)
-            response.raise_for_status()
-            try:
-                body = response.json()
-            except Exception:
-                body = None
-            futwork_lead_id = LeadService._extract_futwork_lead_id(body)
-            await ls.apply_lead_futwork_sync(
-                mobile_digits_10=phone,
-                status="pushed",
-                futwork_lead_id=futwork_lead_id if futwork_lead_id else None,
-                campaign_id=campaign_id,
-            )
-            return True
-        except httpx.HTTPStatusError as e:
-            logger.error(
-                "Failed to push lead %s to Futwork | HTTPStatusError: %s",
-                phone,
-                e,
-                exc_info=True,
-            )
-            await ls.apply_lead_futwork_sync(
-                mobile_digits_10=phone,
-                status="failed",
-                campaign_id=campaign_id,
-            )
-            return False
-        except Exception as e:
-            logger.error(
-                "Failed to push lead %s to Futwork: %s",
-                phone,
-                e,
-                exc_info=True,
-            )
-            await ls.apply_lead_futwork_sync(
-                mobile_digits_10=phone,
-                status="failed",
-                campaign_id=campaign_id,
-            )
-            return False
+        return ok
 
     async def retry_failed_leads(self, campaign_id: str) -> Dict[str, Any]:
         """Re-push leads with futwork_sync_status failed for this campaign."""

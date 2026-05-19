@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback, memo } from "react";
+import { useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -36,7 +37,6 @@ import {
   DialogTitle,
 } from "../components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
-import Sidebar from "../components/Sidebar";
 import EmptyState from "../components/feedback/EmptyState";
 import { CallTableSkeleton } from "../components/feedback/Skeletons";
 import { api } from "../lib/api";
@@ -239,7 +239,8 @@ const StatTile = memo(function StatTile({
 // -----------------------------------------------------------------------------
 // Main page
 // -----------------------------------------------------------------------------
-const AICallingPage = ({ onLogout, currentUser }) => {
+const AICallingPage = () => {
+  const [searchParams] = useSearchParams();
   const [calls, setCalls] = useState([]);
   const [campaigns, setCampaigns] = useState([]);
   const [statusOptions, setStatusOptions] = useState([]);
@@ -252,7 +253,13 @@ const AICallingPage = ({ onLogout, currentUser }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [dispositionFilter, setDispositionFilter] = useState("all");
+  const [dispositionFilter, setDispositionFilter] = useState(
+    searchParams.get("disposition") || "all"
+  );
+  const [uploadBatchFilter, setUploadBatchFilter] = useState(
+    searchParams.get("upload_batch_id") || searchParams.get("campaignId") || "all"
+  );
+  const [uploadBatches, setUploadBatches] = useState([]);
   const [updatingDisposition, setUpdatingDisposition] = useState(false);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
@@ -268,6 +275,14 @@ const AICallingPage = ({ onLogout, currentUser }) => {
 
   // Virtual list scroll container
   const scrollContainerRef = useRef(null);
+
+  // -------- URL deep-link bootstrap --------
+  useEffect(() => {
+    const q = searchParams.get("q") || searchParams.get("phone") || "";
+    const leadId = searchParams.get("leadId");
+    if (q) setSearchQuery(q);
+    if (searchParams.get("disposition")) setDispositionFilter(searchParams.get("disposition"));
+  }, [searchParams]);
 
   // -------- Debounced search --------
   useEffect(() => {
@@ -290,6 +305,7 @@ const AICallingPage = ({ onLogout, currentUser }) => {
           setCampaigns(Array.isArray(d.campaigns) ? d.campaigns : []);
           setStatusOptions(Array.isArray(d.statuses) ? d.statuses : []);
           setDispositionOptions(Array.isArray(d.dispositions) ? d.dispositions : []);
+          setUploadBatches(Array.isArray(d.upload_batches) ? d.upload_batches : []);
         }
         // currentCampaign isn't used in render today but the fetch is kept
         // identical to avoid changing API behavior.
@@ -315,8 +331,12 @@ const AICallingPage = ({ onLogout, currentUser }) => {
         ? { disposition: dispositionFilter }
         : {}),
       ...(debouncedSearch.trim() ? { q: debouncedSearch.trim() } : {}),
+      ...(uploadBatchFilter && uploadBatchFilter !== "all"
+        ? { upload_batch_id: uploadBatchFilter }
+        : {}),
+      ...(searchParams.get("leadId") ? { leadId: searchParams.get("leadId") } : {}),
     }),
-    [selectedCampaign, statusFilter, dispositionFilter, debouncedSearch]
+    [selectedCampaign, statusFilter, dispositionFilter, debouncedSearch, uploadBatchFilter, searchParams]
   );
 
   const summaryParams = useCallback(
@@ -327,8 +347,11 @@ const AICallingPage = ({ onLogout, currentUser }) => {
         ? { disposition: dispositionFilter }
         : {}),
       ...(debouncedSearch.trim() ? { q: debouncedSearch.trim() } : {}),
+      ...(uploadBatchFilter && uploadBatchFilter !== "all"
+        ? { upload_batch_id: uploadBatchFilter }
+        : {}),
     }),
-    [selectedCampaign, statusFilter, dispositionFilter, debouncedSearch]
+    [selectedCampaign, statusFilter, dispositionFilter, debouncedSearch, uploadBatchFilter]
   );
 
   // -------- Primary fetch on filter change --------
@@ -516,10 +539,7 @@ const AICallingPage = ({ onLogout, currentUser }) => {
   const totalSize = virtualizer.getTotalSize();
 
   return (
-    <div className="min-h-screen bg-[#0D0D0D] flex">
-      <Sidebar onLogout={onLogout} currentUser={currentUser} />
-
-      <main className="flex-1 p-8 ml-20 lg:ml-64">
+    <motion.div className="space-y-8">
         {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: -20 }}
@@ -527,10 +547,11 @@ const AICallingPage = ({ onLogout, currentUser }) => {
           transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
           className="mb-8"
         >
+          <p className="text-[#C5A059] text-sm font-medium tracking-widest uppercase mb-2">Voice AI</p>
           <h1 className="font-serif text-3xl text-white mb-2 tracking-tight">
             AI Calling Engine
           </h1>
-          <p className="text-[#A3A3A3]">
+          <p className="text-[#A1A1AA]">
             Live record of every AI-placed call for Rustomjee campaigns
           </p>
         </motion.div>
@@ -540,7 +561,8 @@ const AICallingPage = ({ onLogout, currentUser }) => {
         ) : (
           <>
             {/* Stats Cards */}
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-8">
+            <div className="glass-card rounded-lg p-4 mb-8">
+            <motion.div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
               <StatTile icon={PhoneCall} label="Total Calls" value={stats.total} tone="gold" />
               <StatTile
                 icon={CheckCircle}
@@ -570,6 +592,7 @@ const AICallingPage = ({ onLogout, currentUser }) => {
                 tone="purple"
                 delay={0.2}
               />
+            </motion.div>
             </div>
 
             {/* Batch Summary (AI Structured Extraction) */}
@@ -666,6 +689,22 @@ const AICallingPage = ({ onLogout, currentUser }) => {
                     ))}
                   </SelectContent>
                 </Select>
+
+                {uploadBatches.length > 0 && (
+                  <Select value={uploadBatchFilter} onValueChange={setUploadBatchFilter}>
+                    <SelectTrigger className="w-[220px] bg-[#1A1A1A] border-white/10 text-white">
+                      <SelectValue placeholder="All Batches" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-[#1A1A1A] border-white/10">
+                      <SelectItem value="all">All Batches</SelectItem>
+                      {uploadBatches.map((b) => (
+                        <SelectItem key={b.id} value={b.id}>
+                          {b.name} ({b.count})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
 
                 <Select value={dispositionFilter} onValueChange={setDispositionFilter}>
                   <SelectTrigger className="w-[180px] bg-[#1A1A1A] border-white/10 text-white">
@@ -1003,22 +1042,24 @@ const AICallingPage = ({ onLogout, currentUser }) => {
                     </div>
                   </TabsContent>
 
-                  <TabsContent value="transcript" className="mt-4 flex-1 min-h-0">
-                    <div className="bg-white/5 rounded-lg p-4 border border-white/10 flex max-h-[70vh] min-h-0 flex-col">
+                  <TabsContent value="transcript" className="mt-4">
+                    <motion.div className="bg-white/5 rounded-lg p-4 border border-white/10 flex flex-col">
                       <h4 className="kicker mb-4 flex flex-shrink-0 items-center gap-2">
                         <FileText className="w-4 h-4" />
                         Call Transcript
                       </h4>
                       {selectedCall.transcript ? (
-                        <div className="min-h-[120px] max-h-[55vh] flex-1 overflow-y-auto pr-1">
-                          <div className="space-y-3 pr-2">
+                        <motion.div className="max-h-[55vh] min-h-[200px] overflow-y-auto pr-1 scrollbar-luxe">
+                          <motion.div className="flex flex-col gap-3 w-full pr-2">
                             {parseCallTranscriptTurns(selectedCall.transcript).map((turn, idx) => (
-                              <div
-                                key={idx}
-                                className={`flex ${turn.isUser ? "justify-end" : "justify-start"}`}
+                              <motion.div
+                                key={`${idx}-${turn.isUser ? "c" : "a"}-${turn.text.slice(0, 40)}`}
+                                className={`flex w-full shrink-0 ${
+                                  turn.isUser ? "justify-end" : "justify-start"
+                                }`}
                               >
-                                <div
-                                  className={`max-w-[80%] rounded-lg px-4 py-2 ${
+                                <motion.div
+                                  className={`max-w-[85%] rounded-lg px-4 py-2 overflow-hidden ${
                                     turn.isUser
                                       ? "bg-white/10 text-white"
                                       : "bg-[#C5A059]/15 text-[#F2D9A8] border border-[#C5A059]/20"
@@ -1030,25 +1071,24 @@ const AICallingPage = ({ onLogout, currentUser }) => {
                                   <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
                                     {turn.text}
                                   </p>
-                                </div>
-                              </div>
+                                </motion.div>
+                              </motion.div>
                             ))}
-                          </div>
-                        </div>
+                          </motion.div>
+                        </motion.div>
                       ) : (
                         <p className="text-[#A3A3A3] text-center py-8">
                           No transcript available for this call
                         </p>
                       )}
-                    </div>
+                    </motion.div>
                   </TabsContent>
                 </Tabs>
               </div>
             )}
           </DialogContent>
         </Dialog>
-      </main>
-    </div>
+    </motion.div>
   );
 };
 

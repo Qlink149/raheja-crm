@@ -8,7 +8,22 @@ import logging
 
 from app.core.config import settings
 from app.core.database import connect_to_mongo, close_mongo_connection, initialize_db, get_db
-from app.api.v1 import leads, dashboard, ai, webhooks, campaigns, projects, agents
+from app.core.security import get_current_user
+from app.api.v1 import (
+    leads,
+    dashboard,
+    ai,
+    webhooks,
+    campaigns,
+    projects,
+    agents,
+    auth,
+    users,
+    my_dashboard,
+    analytics,
+    marketing,
+    notifications,
+)
 from app.models.structured_extraction import StructuredDisposition
 
 # Configure logging
@@ -50,13 +65,47 @@ async def health_check():
 
 
 # ── API Routers ──────────────────────────────────────────────────────────────
-app.include_router(leads.router, prefix="/api/leads", tags=["Leads"])
-app.include_router(dashboard.router, prefix="/api/dashboard", tags=["Dashboard"])
-app.include_router(ai.router, prefix="/api", tags=["AI"])
+_auth_dep = [Depends(get_current_user)]
+
+app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
+app.include_router(
+    users.router, prefix="/api/users", tags=["Users"], dependencies=_auth_dep
+)
+app.include_router(
+    my_dashboard.router,
+    prefix="/api/my-dashboard",
+    tags=["My Dashboard"],
+    dependencies=_auth_dep,
+)
+app.include_router(
+    leads.router, prefix="/api/leads", tags=["Leads"], dependencies=_auth_dep
+)
+app.include_router(
+    dashboard.router, prefix="/api/dashboard", tags=["Dashboard"], dependencies=_auth_dep
+)
+app.include_router(
+    analytics.router, prefix="/api/analytics", tags=["Analytics"], dependencies=_auth_dep
+)
+app.include_router(
+    marketing.router, prefix="/api/marketing", tags=["Marketing"], dependencies=_auth_dep
+)
+app.include_router(
+    notifications.router,
+    prefix="/api/notifications",
+    tags=["Notifications"],
+    dependencies=_auth_dep,
+)
+app.include_router(ai.router, prefix="/api", tags=["AI"], dependencies=_auth_dep)
 app.include_router(webhooks.router, prefix="/api/webhooks", tags=["Webhooks"])
-app.include_router(campaigns.router, prefix="/api/campaigns", tags=["Campaigns"])
-app.include_router(projects.router, prefix="/api/projects", tags=["Projects"])
-app.include_router(agents.router, prefix="/api/agents", tags=["Agents"])
+app.include_router(
+    campaigns.router, prefix="/api/campaigns", tags=["Campaigns"], dependencies=_auth_dep
+)
+app.include_router(
+    projects.router, prefix="/api/projects", tags=["Projects"], dependencies=_auth_dep
+)
+app.include_router(
+    agents.router, prefix="/api/agents", tags=["Agents"], dependencies=_auth_dep
+)
 
 
 def _and_queries(*parts: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -68,13 +117,92 @@ def _and_queries(*parts: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     return {"$and": merged}
 
 
+_OVERCALL_SIGNAL_PHRASES = (
+    "called multiple times",
+    "too many calls",
+    "bar bar",
+)
+
+_CRM_OVERCALL_ISSUE = (
+    "Leads complaining about over-calling; reduce retries and use human callback."
+)
+
+
+async def _call_history_lead_id_clause(db, lead_id: str) -> Optional[Dict[str, Any]]:
+    """Expand internal leads.id to call_history match (lead_id, phone, Futwork ids)."""
+    lid = (lead_id or "").strip()
+    if not lid:
+        return None
+    lead = await db.leads.find_one(
+        {"id": lid},
+        {"_id": 0, "id": 1, "mobile_digits": 1, "client_lead_id": 1, "futwork_lead_id": 1},
+    )
+    if not lead:
+        return {"lead_id": lid}
+    ors: List[Dict[str, Any]] = [{"lead_id": lid}]
+    md = (lead.get("mobile_digits") or "").strip()
+    if md:
+        ors.append({"mobile_digits": md})
+    cid = (lead.get("client_lead_id") or "").strip()
+    if cid:
+        ors.append({"client_lead_id": cid})
+    fid = (lead.get("futwork_lead_id") or "").strip()
+    if fid:
+        ors.append({"futwork_lead_id": fid})
+    return {"$or": ors} if len(ors) > 1 else ors[0]
+
+
+async def _detect_crm_issues_from_calls(db, base: Dict[str, Any]) -> List[str]:
+    """Scan key_signals on recent filtered calls for over-calling complaints."""
+    issues: List[str] = []
+    seen: set = set()
+    cursor = (
+        db.call_history.find(
+            _and_queries(
+                base,
+                {"structured_extraction.key_signals": {"$exists": True, "$ne": []}},
+            ),
+            {"structured_extraction.key_signals": 1},
+        )
+        .sort("created_at", -1)
+        .limit(200)
+    )
+    docs = await cursor.to_list(200)
+    for doc in docs:
+        se = doc.get("structured_extraction") or {}
+        signals = se.get("key_signals") if isinstance(se, dict) else []
+        if not isinstance(signals, list):
+            continue
+        for sig in signals:
+            sl = str(sig or "").lower()
+            if any(p in sl for p in _OVERCALL_SIGNAL_PHRASES):
+                if _CRM_OVERCALL_ISSUE not in seen:
+                    seen.add(_CRM_OVERCALL_ISSUE)
+                    issues.append(_CRM_OVERCALL_ISSUE)
+                break
+    return issues
+
+
 def _call_history_filter_query(
     campaign: Optional[str],
     status: Optional[str],
     disposition: Optional[str],
     search: Optional[str],
+    upload_batch_id: Optional[str] = None,
+    lead_id: Optional[str] = None,
+    mobile_digits: Optional[str] = None,
+    *,
+    lead_id_clause: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     parts: List[Dict[str, Any]] = []
+    if upload_batch_id and upload_batch_id != "all":
+        parts.append({"upload_batch_id": upload_batch_id})
+    if lead_id_clause is not None:
+        parts.append(lead_id_clause)
+    elif lead_id:
+        parts.append({"lead_id": lead_id})
+    if mobile_digits:
+        parts.append({"mobile_digits": mobile_digits})
     if campaign and campaign != "all":
         parts.append({"campaign": campaign})
     if disposition and disposition != "all":
@@ -89,6 +217,7 @@ def _call_history_filter_query(
         or_clauses: List[Dict[str, Any]] = [
             {"customer_name": {"$regex": esc, "$options": "i"}},
             {"phone": {"$regex": esc, "$options": "i"}},
+            {"client_lead_id": {"$regex": esc, "$options": "i"}},
         ]
         if digits:
             or_clauses.append({"mobile_digits": {"$regex": digits}})
@@ -118,7 +247,7 @@ def _doc_to_call_row(doc: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-@app.get("/api/call-history/filters")
+@app.get("/api/call-history/filters", dependencies=_auth_dep)
 async def get_call_history_filters(db=Depends(get_db)):
     """Distinct filter values — small payload for dropdowns."""
     try:
@@ -144,27 +273,65 @@ async def get_call_history_filters(db=Depends(get_db)):
             }
         )
 
+        upload_batches = []
+        pipeline = [
+            {"$match": {"upload_batch_id": {"$nin": ["", None]}}},
+            {
+                "$group": {
+                    "_id": "$upload_batch_id",
+                    "name": {"$first": "$upload_batch_name"},
+                    "count": {"$sum": 1},
+                }
+            },
+            {"$sort": {"count": -1}},
+            {"$limit": 100},
+        ]
+        for row in await db.call_history.aggregate(pipeline).to_list(100):
+            bid = row.get("_id")
+            if bid:
+                upload_batches.append(
+                    {
+                        "id": str(bid),
+                        "name": (row.get("name") or str(bid))[:200],
+                        "count": int(row.get("count") or 0),
+                    }
+                )
+
         return {
             "campaigns": campaigns_merged,
             "statuses": statuses,
             "dispositions": dispositions,
+            "upload_batches": upload_batches,
         }
     except Exception as e:
         logger.error("Error fetching call history filters: %s", e)
-        return {"campaigns": [], "statuses": [], "dispositions": []}
+        return {"campaigns": [], "statuses": [], "dispositions": [], "upload_batches": []}
 
 
-@app.get("/api/call-history/summary")
+@app.get("/api/call-history/summary", dependencies=_auth_dep)
 async def get_call_history_summary(
     campaign: str = None,
     status: str = None,
     disposition: str = None,
     q: str = None,
+    upload_batch_id: str = None,
+    leadId: str = None,
+    mobile_digits: str = None,
     db=Depends(get_db),
 ):
     """Aggregated KPIs for call_history matching the same filters as the list endpoint."""
     try:
-        base = _call_history_filter_query(campaign, status, disposition, q)
+        lead_clause = await _call_history_lead_id_clause(db, leadId) if leadId else None
+        base = _call_history_filter_query(
+            campaign,
+            status,
+            disposition,
+            q,
+            upload_batch_id=upload_batch_id,
+            lead_id=leadId,
+            mobile_digits=mobile_digits,
+            lead_id_clause=lead_clause,
+        )
         total = await db.call_history.count_documents(base)
 
         completed_q = _and_queries(
@@ -224,7 +391,7 @@ async def get_call_history_summary(
         }
 
 
-@app.get("/api/call-history/ai-batch-summary")
+@app.get("/api/call-history/ai-batch-summary", dependencies=_auth_dep)
 async def get_call_history_ai_batch_summary(
     campaign: str = None,
     status: str = None,
@@ -300,6 +467,8 @@ async def get_call_history_ai_batch_summary(
             if len(top_priority) >= 3:
                 break
 
+        crm_issues = await _detect_crm_issues_from_calls(db, base)
+
         return {
             "batch_summary": {
                 "total_calls": total,
@@ -315,7 +484,7 @@ async def get_call_history_ai_batch_summary(
                 "already_bought": int(counts.get(StructuredDisposition.already_bought.value, 0)),
                 "system_tags_incorrect": int(system_incorrect),
                 "top_priority_leads": top_priority,
-                "crm_issues_detected": [],
+                "crm_issues_detected": crm_issues,
             }
         }
     except Exception as e:
@@ -336,12 +505,15 @@ async def get_call_history_ai_batch_summary(
         }
 
 
-@app.get("/api/call-history")
+@app.get("/api/call-history", dependencies=_auth_dep)
 async def get_call_history(
     campaign: str = None,
     status: str = None,
     disposition: str = None,
     q: str = None,
+    upload_batch_id: str = None,
+    leadId: str = None,
+    mobile_digits: str = None,
     page: int = 1,
     size: int = 50,
     limit: int = 0,
@@ -353,7 +525,17 @@ async def get_call_history(
     only when call_history is empty for this deployment.
     """
     try:
-        ch_query = _call_history_filter_query(campaign, status, disposition, q)
+        lead_clause = await _call_history_lead_id_clause(db, leadId) if leadId else None
+        ch_query = _call_history_filter_query(
+            campaign,
+            status,
+            disposition,
+            q,
+            upload_batch_id=upload_batch_id,
+            lead_id=leadId,
+            mobile_digits=mobile_digits,
+            lead_id_clause=lead_clause,
+        )
 
         # Legacy: offset/limit when page not used explicitly (limit>0 and page is default)
         use_legacy_pagination = limit > 0 and page == 1 and size == 50
@@ -413,6 +595,7 @@ async def get_call_history(
                 ors = [
                     {"full_name": {"$regex": esc, "$options": "i"}},
                     {"mobile": {"$regex": esc, "$options": "i"}},
+                    {"client_lead_id": {"$regex": esc, "$options": "i"}},
                 ]
                 if digits:
                     ors.append({"mobile_digits": {"$regex": digits}})
