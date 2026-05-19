@@ -17,7 +17,7 @@ import { Input } from "../components/ui/input";
 import { LeadGridSkeleton } from "../components/feedback/Skeletons";
 
 const MyDashboardPage = () => {
-  const { user, isAdmin } = useAuth();
+  const { user } = useAuth();
   const navigate = useNavigate();
   const [metrics, setMetrics] = useState(null);
   const [leads, setLeads] = useState([]);
@@ -43,7 +43,6 @@ const MyDashboardPage = () => {
   }, []);
 
   const loadLeads = useCallback(async () => {
-    if (isAdmin) return;
     setLeadsLoading(true);
     try {
       const params = { skip: 0, limit: 100 };
@@ -57,7 +56,7 @@ const MyDashboardPage = () => {
     } finally {
       setLeadsLoading(false);
     }
-  }, [debouncedSearch, tempFilter, isAdmin]);
+  }, [debouncedSearch, tempFilter]);
 
   useEffect(() => {
     (async () => {
@@ -68,26 +67,8 @@ const MyDashboardPage = () => {
   }, [loadDashboard]);
 
   useEffect(() => {
-    if (!loading && !isAdmin) loadLeads();
-  }, [loading, isAdmin, loadLeads]);
-
-  if (isAdmin) {
-    return (
-      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="p-6 lg:p-8">
-        <h1 className="font-serif text-3xl text-white mb-2">My Dashboard</h1>
-        <p className="text-[#A3A3A3] mb-6">
-          Admins use the organization Dashboard for full metrics.{" "}
-          <button
-            type="button"
-            className="text-[#C5A059] underline"
-            onClick={() => navigate("/dashboard")}
-          >
-            Go to Dashboard
-          </button>
-        </p>
-      </motion.div>
-    );
-  }
+    if (!loading) loadLeads();
+  }, [loading, loadLeads]);
 
   const cards = [
     { label: "My Leads", value: metrics?.total_leads ?? 0, icon: Users, color: "text-[#C5A059]" },

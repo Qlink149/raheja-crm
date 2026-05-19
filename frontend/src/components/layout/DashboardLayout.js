@@ -42,7 +42,9 @@ const DashboardLayout = () => {
     ...(isAdmin
       ? [{ path: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' }]
       : []),
-    { path: '/my-dashboard', icon: UserCircle, label: 'My Dashboard' },
+    ...(isAdmin
+      ? []
+      : [{ path: '/my-dashboard', icon: UserCircle, label: 'My Dashboard' }]),
     { path: '/virtual-customer', icon: Users, label: 'Virtual Customer' },
     { path: '/ai-calling', icon: Phone, label: 'AI Calling' },
     ...(isAdmin

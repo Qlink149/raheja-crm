@@ -37,6 +37,14 @@ const AdminRoute = ({ children }) => {
   return children;
 };
 
+const SalesRoute = ({ children }) => {
+  const { isAuthenticated, loading, isAdmin } = useAuth();
+  if (loading) return <LoadingScreen />;
+  if (!isAuthenticated) return <Navigate to="/login" replace />;
+  if (isAdmin) return <Navigate to="/dashboard" replace />;
+  return children;
+};
+
 const HomeRedirect = () => {
   const { isAdmin, loading } = useAuth();
   if (loading) return <LoadingScreen />;
@@ -80,7 +88,14 @@ function AppRoutes() {
             </AdminRoute>
           }
         />
-        <Route path="my-dashboard" element={<MyDashboardPage />} />
+        <Route
+          path="my-dashboard"
+          element={
+            <SalesRoute>
+              <MyDashboardPage />
+            </SalesRoute>
+          }
+        />
         <Route path="virtual-customer" element={<VirtualCustomerPage />} />
         <Route path="customer/:id" element={<CustomerDetailPage />} />
         <Route path="ai-calling" element={<AICallingPage />} />
