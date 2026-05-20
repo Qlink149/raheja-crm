@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 import logging
 import httpx
@@ -14,6 +15,8 @@ from .lead_service import LeadService
 from .futwork_push import post_one_lead_to_futwork
 
 logger = logging.getLogger(__name__)
+
+BULK_FUTWORK_PUSH_MAX_LIMIT = 5000
 
 # Map internal agent IDs to human-readable names
 AGENT_NAME_MAP = {
@@ -213,13 +216,168 @@ class CampaignService:
             ),
         )
 
+    _FUTWORK_HISTORY_FILTER: Dict[str, Any] = {
+        "$or": [
+            {"futwork_pushed": {"$gt": 0}},
+            {"source": "bulk_push"},
+        ]
+    }
+
+    _FUTWORK_FILTER_BATCHES_QUERY: Dict[str, Any] = {
+        "$or": [
+            {"futwork_pushed": {"$gt": 0}},
+            {
+                "source": "bulk_push",
+                "status": "completed",
+                "futwork_pushed": {"$gt": 0},
+            },
+        ]
+    }
+
     async def list_upload_history(self, limit: int = 100) -> List[Dict[str, Any]]:
         docs = (
-            await self.db.lead_upload_history.find({}, {"_id": 0})
+            await self.db.lead_upload_history.find(self._FUTWORK_HISTORY_FILTER, {"_id": 0})
             .sort("created_at", -1)
             .to_list(length=limit)
         )
         return docs
+
+    async def list_upload_batches_for_filters(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """Futwork-synced upload batches for dashboard filter dropdowns."""
+        docs = (
+            await self.db.lead_upload_history.find(
+                self._FUTWORK_FILTER_BATCHES_QUERY,
+                {
+                    "_id": 0,
+                    "id": 1,
+                    "batch_name": 1,
+                    "filename": 1,
+                    "created_at": 1,
+                    "futwork_pushed": 1,
+                    "processed": 1,
+                },
+            )
+            .sort("created_at", -1)
+            .to_list(length=limit)
+        )
+        out: List[Dict[str, Any]] = []
+        for doc in docs:
+            uid = doc.get("id")
+            if not uid:
+                continue
+            pushed = int(doc.get("futwork_pushed") or 0)
+            if pushed <= 0:
+                continue
+            name = (doc.get("batch_name") or doc.get("filename") or str(uid)).strip()
+            out.append(
+                {
+                    "id": str(uid),
+                    "name": name[:200],
+                    "count": pushed,
+                }
+            )
+        return out
+
+    async def count_bulk_futwork_push_eligible(self) -> int:
+        lead_svc = LeadService(self.db)
+        return await lead_svc.count_leads_eligible_for_bulk_futwork_push()
+
+    async def _resolve_internal_campaign_id(self) -> Optional[str]:
+        try:
+            doc = await self.find_campaign_by_futwork_settings()
+            if doc and doc.get("id"):
+                return str(doc["id"])
+        except Exception:
+            logger.exception("bulk_futwork_push: failed to resolve internal campaign id")
+        return None
+
+    async def _run_bulk_futwork_push(
+        self,
+        batch_id: str,
+        batch_name: str,
+        limit: int,
+    ) -> None:
+        lead_svc = LeadService(self.db)
+        try:
+            leads = await lead_svc.fetch_leads_eligible_for_bulk_futwork_push(limit)
+            lead_ids = [str(l.get("id") or "") for l in leads if l.get("id")]
+            if lead_ids:
+                await lead_svc.tag_leads_with_upload_batch(
+                    lead_ids,
+                    upload_batch_id=batch_id,
+                    upload_batch_name=batch_name,
+                )
+                for lead in leads:
+                    lead["upload_batch_id"] = batch_id
+                    lead["upload_batch_name"] = batch_name
+
+            campaign_id = await self._resolve_internal_campaign_id()
+            pushed, failed = await lead_svc.push_to_futwork(leads, campaign_id=campaign_id)
+            attempted = len(leads)
+
+            update: Dict[str, Any] = {
+                "processed": attempted,
+                "futwork_pushed": pushed,
+                "futwork_failed": failed,
+                "status": "completed",
+            }
+            if pushed <= 0 and attempted > 0:
+                update["status"] = "failed"
+
+            await self.db.lead_upload_history.update_one(
+                {"id": batch_id},
+                {"$set": update},
+            )
+            logger.info(
+                "bulk_futwork_push complete | batch_id=%s | attempted=%s pushed=%s failed=%s",
+                batch_id,
+                attempted,
+                pushed,
+                failed,
+            )
+        except Exception:
+            logger.exception("bulk_futwork_push failed | batch_id=%s", batch_id)
+            await self.db.lead_upload_history.update_one(
+                {"id": batch_id},
+                {"$set": {"status": "failed"}},
+            )
+
+    async def start_bulk_futwork_push(self, batch_name: str, limit: int) -> Dict[str, Any]:
+        if not (settings.FUTWORK_API_KEY or "").strip() or not (
+            settings.FUTWORK_CAMPAIGN_ID or ""
+        ).strip():
+            raise ValueError("futwork_not_configured")
+
+        lim = max(1, min(int(limit), BULK_FUTWORK_PUSH_MAX_LIMIT))
+        name = (batch_name or "").strip()
+        if not name:
+            raise ValueError("batch_name_required")
+
+        batch_id = str(uuid.uuid4())
+        now = datetime.utcnow()
+        history_doc = {
+            "id": batch_id,
+            "source": "bulk_push",
+            "status": "processing",
+            "batch_name": name[:200],
+            "filename": "DB bulk push",
+            "created_at": now,
+            "processed": lim,
+            "new_leads": 0,
+            "updated_leads": 0,
+            "unprocessed": 0,
+            "futwork_pushed": 0,
+            "futwork_failed": 0,
+        }
+        await self.db.lead_upload_history.insert_one(history_doc)
+
+        asyncio.create_task(self._run_bulk_futwork_push(batch_id, name[:200], lim))
+
+        return {
+            "batch_id": batch_id,
+            "status": "processing",
+            "requested": lim,
+        }
 
     async def _push_one_lead_to_futwork(
         self,

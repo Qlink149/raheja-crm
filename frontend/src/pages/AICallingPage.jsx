@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback, memo } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -39,7 +39,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import EmptyState from "../components/feedback/EmptyState";
 import { CallTableSkeleton } from "../components/feedback/Skeletons";
-import { api } from "../lib/api";
+import { api, campaignsAPI } from "../lib/api";
 
 const PAGE_SIZE = 50;
 const ROW_HEIGHT = 64; // px, matches the grid row's effective height
@@ -240,6 +240,7 @@ const StatTile = memo(function StatTile({
 // Main page
 // -----------------------------------------------------------------------------
 const AICallingPage = () => {
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [calls, setCalls] = useState([]);
   const [campaigns, setCampaigns] = useState([]);
@@ -295,9 +296,9 @@ const AICallingPage = () => {
     let cancelled = false;
     (async () => {
       try {
-        const [filRes, campRes] = await Promise.allSettled([
+        const [filRes, batchesRes] = await Promise.allSettled([
           api.get("/call-history/filters"),
-          api.get("/campaigns/current"),
+          campaignsAPI.getUploadBatches(),
         ]);
         if (cancelled) return;
         if (filRes.status === "fulfilled") {
@@ -305,11 +306,10 @@ const AICallingPage = () => {
           setCampaigns(Array.isArray(d.campaigns) ? d.campaigns : []);
           setStatusOptions(Array.isArray(d.statuses) ? d.statuses : []);
           setDispositionOptions(Array.isArray(d.dispositions) ? d.dispositions : []);
-          setUploadBatches(Array.isArray(d.upload_batches) ? d.upload_batches : []);
         }
-        // currentCampaign isn't used in render today but the fetch is kept
-        // identical to avoid changing API behavior.
-        void campRes;
+        if (batchesRes.status === "fulfilled") {
+          setUploadBatches(Array.isArray(batchesRes.value.data) ? batchesRes.value.data : []);
+        }
       } catch (e) {
         console.error(e);
         toast.error("Could not load campaign filters");
@@ -699,7 +699,7 @@ const AICallingPage = () => {
                       <SelectItem value="all">All Batches</SelectItem>
                       {uploadBatches.map((b) => (
                         <SelectItem key={b.id} value={b.id}>
-                          {b.name} ({b.count})
+                          {b.name} ({b.count} synced)
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -1019,6 +1019,23 @@ const AICallingPage = () => {
                           <p className="text-white font-mono text-sm truncate">
                             {selectedCall.lead_id || "N/A"}
                           </p>
+                          {!selectedCall.lead_id && selectedCall.phone ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="mt-2 border-[#C5A059]/40 text-[#C5A059] hover:bg-[#C5A059]/10"
+                              onClick={() => {
+                                const q = new URLSearchParams({
+                                  search: selectedCall.phone,
+                                  futwork_sync_status: "all",
+                                });
+                                navigate(`/virtual-customer?${q.toString()}`);
+                              }}
+                            >
+                              Find in Virtual Customer
+                            </Button>
+                          ) : null}
                         </div>
                         <div className="min-w-0">
                           <p className="text-xs text-[#525252] mb-1">Campaign</p>

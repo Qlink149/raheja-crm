@@ -67,8 +67,65 @@ export const marketingAPI = {
   deleteSpend: (id) => api.delete(`/marketing/spends/${id}`),
 };
 
+/**
+ * Download a protected file via the authenticated API client (Bearer token).
+ * @param {string} url - Path relative to api baseURL (e.g. /campaigns/.../download-original)
+ * @param {string} filename - Suggested download filename
+ */
+export async function downloadAuthenticatedFile(url, filename) {
+  const res = await api.get(url, { responseType: "blob" });
+  const blob = res.data;
+  const contentType = (res.headers["content-type"] || "").toLowerCase();
+
+  if (contentType.includes("application/json") || blob.type?.includes("json")) {
+    const text = await blob.text();
+    let detail = "Download failed";
+    try {
+      const parsed = JSON.parse(text);
+      detail = parsed.detail || detail;
+    } catch {
+      detail = text || detail;
+    }
+    throw new Error(typeof detail === "string" ? detail : "Download failed");
+  }
+
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = filename || "download";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(objectUrl);
+}
+
+export const campaignsAPI = {
+  getCurrent: (params) => api.get("/campaigns/current", { params }),
+  getUploadHistory: (params) => api.get("/campaigns/current/upload-history", { params }),
+  getUploadBatches: (params) => api.get("/campaigns/current/upload-batches", { params }),
+  getBulkFutworkEligibleCount: () =>
+    api.get("/campaigns/current/bulk-futwork-push/eligible-count"),
+  startBulkFutworkPush: (data) =>
+    api.post("/campaigns/current/bulk-futwork-push", data),
+};
+
 export const notificationsAPI = {
   getAll: (params) => api.get("/notifications", { params }),
   markRead: (id) => api.put(`/notifications/${id}/read`),
   markAllRead: () => api.put("/notifications/read-all"),
+};
+
+export const tasksAPI = {
+  list: (params) => api.get("/tasks", { params }),
+  create: (leadId, data) => api.post(`/leads/${leadId}/tasks`, data),
+  createStandalone: (data) => api.post("/tasks", data),
+  update: (taskId, data) => api.put(`/tasks/${taskId}`, data),
+};
+
+export const remindersAPI = {
+  getRules: () => api.get("/reminders/rules"),
+  updateRule: (ruleId, data) => api.put(`/reminders/rules/${ruleId}`, data),
+  getHistory: (limit = 50) => api.get("/reminders/history", { params: { limit } }),
+  trigger: () => api.post("/reminders/trigger"),
+  sendManual: (data) => api.post("/reminders/send", data),
 };

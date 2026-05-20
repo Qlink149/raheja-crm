@@ -115,9 +115,19 @@ async def initialize_db():
 
     await db.notifications.create_index("id", unique=True)
     await db.notifications.create_index([("is_read", 1), ("created_at", -1)])
+    await db.notifications.create_index(
+        [("recipient_user_id", 1), ("is_read", 1), ("created_at", -1)],
+        name="notifications_recipient_read_created",
+    )
+    await db.notifications.create_index("dedupe_key", sparse=True)
 
     await db.tasks.create_index("id", unique=True)
     await db.tasks.create_index([("status", 1), ("due_date", 1)])
+    await db.tasks.create_index("assigned_user_id")
+
+    await db.reminder_rules.create_index("id", unique=True)
+    await db.reminders.create_index("dedupe_key", unique=True)
+    await db.reminders.create_index([("created_at", -1)])
 
     await _seed_default_users(db)
 

@@ -116,14 +116,21 @@ const DashboardLayout = () => {
   const getNotificationIcon = (type) => {
     switch (type) {
       case 'rnr_followup':
-      case 'stale_followup':
         return Phone;
+      case 'stale_followup':
+      case 'dormant_lead':
+        return Clock;
       case 'task_overdue':
+      case 'task_reminder':
         return Calendar;
       case 'hot_vip_lead':
+      case 'new_lead_assigned':
+      case 'lead_transferred':
         return AlertTriangle;
       case 'ai_call_summary':
         return Bell;
+      case 'reminder':
+        return Calendar;
       case 'alert':
         return AlertTriangle;
       case 'message':

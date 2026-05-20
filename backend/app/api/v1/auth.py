@@ -37,6 +37,7 @@ async def register(user_data: UserCreate, db=Depends(get_db)):
         "hashed_password": hash_password(user_data.password),
         "is_active": True,
         "current_session_id": None,
+        "notification_dismissals": [],
         "created_at": created_at.isoformat(),
         "updated_at": created_at.isoformat(),
     }

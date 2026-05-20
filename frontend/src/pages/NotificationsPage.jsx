@@ -19,10 +19,11 @@ const severityStyle = (n) => {
 };
 
 const iconFor = (type) => {
-  if (type === "rnr_followup" || type === "stale_followup") return Phone;
-  if (type === "task_overdue") return Calendar;
+  if (type === "rnr_followup") return Phone;
+  if (type === "stale_followup" || type === "dormant_lead") return Clock;
+  if (type === "task_overdue" || type === "task_reminder" || type === "reminder") return Calendar;
   if (type === "ai_call_summary") return Sparkles;
-  if (type === "hot_vip_lead") return AlertTriangle;
+  if (type === "hot_vip_lead" || type === "new_lead_assigned" || type === "lead_transferred") return AlertTriangle;
   return Clock;
 };
 

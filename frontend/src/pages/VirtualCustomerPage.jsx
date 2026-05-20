@@ -22,7 +22,14 @@ import { ScrollArea } from "../components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import EmptyState from "../components/feedback/EmptyState";
 import { LeadGridSkeleton } from "../components/feedback/Skeletons";
-import { api } from "../lib/api";
+import { api, campaignsAPI } from "../lib/api";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../components/ui/select";
 
 function PlatformSyncBadge({ status }) {
   const s = (status || "pending").toLowerCase();
@@ -82,6 +89,7 @@ const VirtualCustomerPage = () => {
   const [assignedRepFilter, setAssignedRepFilter] = useState(
     searchParams.get("assigned_rep") || "all"
   );
+  const [uploadBatches, setUploadBatches] = useState([]);
   const [futworkSyncFilter, setFutworkSyncFilter] = useState(() => {
     const fromUrl = searchParams.get("futwork_sync_status");
     if (fromUrl) return fromUrl;
@@ -129,6 +137,23 @@ const VirtualCustomerPage = () => {
 
   useEffect(() => {
     fetchProjects();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await campaignsAPI.getUploadBatches();
+        if (!cancelled) {
+          setUploadBatches(Array.isArray(res.data) ? res.data : []);
+        }
+      } catch (e) {
+        console.error("Failed to load upload batches:", e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Reset and reload when filters or debounced search change
@@ -382,6 +407,17 @@ const VirtualCustomerPage = () => {
     setSearchParams(next, { replace: true });
   };
 
+  const handleUploadBatchChange = (value) => {
+    setCampaignIdFilter(value);
+    const next = new URLSearchParams(searchParams);
+    if (value === "all") {
+      next.delete("campaignId");
+    } else {
+      next.set("campaignId", value);
+    }
+    setSearchParams(next, { replace: true });
+  };
+
   return (
     <motion.div className="space-y-8">
       <motion.div
@@ -614,6 +650,24 @@ const VirtualCustomerPage = () => {
                   className="pl-12 bg-[#1A1A1A] border-white/10 text-white placeholder:text-[#525252] focus:border-[#C5A059] h-12"
                 />
               </div>
+              {uploadBatches.length > 0 && (
+                <Select value={campaignIdFilter} onValueChange={handleUploadBatchChange}>
+                  <SelectTrigger
+                    className="w-[220px] bg-[#1A1A1A] border-white/10 text-white h-12"
+                    data-testid="upload-batch-filter"
+                  >
+                    <SelectValue placeholder="All upload batches" />
+                  </SelectTrigger>
+                  <SelectContent className="bg-[#1A1A1A] border-white/10">
+                    <SelectItem value="all">All upload batches</SelectItem>
+                    {uploadBatches.map((b) => (
+                      <SelectItem key={b.id} value={b.id}>
+                        {b.name} ({b.count} synced)
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
               <div className="flex items-center gap-2 text-[#A3A3A3]">
                 <Users className="w-4 h-4" />
                 <span className="text-sm">

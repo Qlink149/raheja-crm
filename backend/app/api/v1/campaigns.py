@@ -4,12 +4,15 @@ import logging
 from typing import Any, Dict, List, Optional
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse, RedirectResponse
 
 from ...core.config import settings
 from ...core.database import get_db
 from ...models.campaign import (
+    BulkFutworkEligibleCountResponse,
+    BulkFutworkPushRequest,
+    BulkFutworkPushStartResponse,
     CampaignCreate,
     CampaignCurrentResponse,
     LeadUploadBatchRename,
@@ -63,6 +66,25 @@ async def get_current_campaign(
     return service.build_current_response(doc, live_override=live_override)
 
 
+@router.get("/current/upload-batches")
+async def get_current_upload_batches(
+    limit: int = Query(100, ge=1, le=500),
+    db=Depends(get_db),
+):
+    """Futwork-synced upload batches for AI Calling / Virtual Customer filters."""
+    if not (settings.FUTWORK_CAMPAIGN_ID or "").strip():
+        raise HTTPException(
+            status_code=503,
+            detail="FUTWORK_CAMPAIGN_ID is not configured on the server",
+        )
+    service = CampaignService(db)
+    try:
+        return await service.list_upload_batches_for_filters(limit=limit)
+    except Exception:
+        logger.exception("get_current_upload_batches: database error")
+        raise HTTPException(status_code=500, detail="Failed to load upload batches")
+
+
 @router.get("/current/upload-history", response_model=List[LeadUploadHistoryEntry])
 async def get_current_upload_history(
     limit: int = Query(100, ge=1, le=500),
@@ -81,6 +103,67 @@ async def get_current_upload_history(
     except Exception:
         logger.exception("get_current_upload_history: database error")
         raise HTTPException(status_code=500, detail="Failed to load upload history")
+
+
+@router.get(
+    "/current/bulk-futwork-push/eligible-count",
+    response_model=BulkFutworkEligibleCountResponse,
+)
+async def get_bulk_futwork_push_eligible_count(db=Depends(get_db)):
+    if not (settings.FUTWORK_CAMPAIGN_ID or "").strip():
+        raise HTTPException(
+            status_code=503,
+            detail="FUTWORK_CAMPAIGN_ID is not configured on the server",
+        )
+    service = CampaignService(db)
+    try:
+        count = await service.count_bulk_futwork_push_eligible()
+        return BulkFutworkEligibleCountResponse(eligible_count=count)
+    except Exception:
+        logger.exception("get_bulk_futwork_push_eligible_count: database error")
+        raise HTTPException(status_code=500, detail="Failed to count eligible leads")
+
+
+@router.post(
+    "/current/bulk-futwork-push",
+    response_model=BulkFutworkPushStartResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def start_bulk_futwork_push(
+    payload: BulkFutworkPushRequest,
+    db=Depends(get_db),
+):
+    if not (settings.FUTWORK_CAMPAIGN_ID or "").strip():
+        raise HTTPException(
+            status_code=503,
+            detail="FUTWORK_CAMPAIGN_ID is not configured on the server",
+        )
+    if not (settings.FUTWORK_API_KEY or "").strip():
+        raise HTTPException(
+            status_code=503,
+            detail="FUTWORK_API_KEY is not configured on the server",
+        )
+
+    service = CampaignService(db)
+    try:
+        result = await service.start_bulk_futwork_push(
+            payload.batch_name,
+            payload.limit,
+        )
+        return BulkFutworkPushStartResponse(**result)
+    except ValueError as e:
+        code = str(e)
+        if code == "futwork_not_configured":
+            raise HTTPException(
+                status_code=503,
+                detail="Futwork is not configured on the server",
+            )
+        if code == "batch_name_required":
+            raise HTTPException(status_code=400, detail="Batch name is required")
+        raise HTTPException(status_code=400, detail=code)
+    except Exception:
+        logger.exception("start_bulk_futwork_push: failed")
+        raise HTTPException(status_code=500, detail="Failed to start bulk Futwork push")
 
 
 @router.get("/current/upload-history/{upload_id}/unprocessed.csv")
@@ -171,6 +254,8 @@ async def get_lead_upload_details(upload_id: str, db=Depends(get_db)):
     failures_n = await db.lead_upload_failures.count_documents({"upload_id": upload_id})
     return {
         "id": doc.get("id"),
+        "source": doc.get("source") or "",
+        "status": doc.get("status") or "",
         "batch_name": doc.get("batch_name") or "",
         "filename": doc.get("filename") or "",
         "created_at": doc.get("created_at"),

@@ -1,3 +1,4 @@
+import asyncio
 import re
 import uvicorn
 from typing import Any, Dict, List, Optional
@@ -7,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import logging
 
 from app.core.config import settings
-from app.core.database import connect_to_mongo, close_mongo_connection, initialize_db, get_db
+from app.core.database import connect_to_mongo, close_mongo_connection, initialize_db, get_db, db_instance
 from app.core.security import get_current_user
 from app.api.v1 import (
     leads,
@@ -23,8 +24,11 @@ from app.api.v1 import (
     analytics,
     marketing,
     notifications,
+    tasks,
+    reminders,
 )
 from app.models.structured_extraction import StructuredDisposition
+from app.services.campaign_service import CampaignService
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -42,15 +46,38 @@ app.add_middleware(
 )
 
 
+reminder_task = None
+
+
+async def _reminder_scheduler():
+    while True:
+        try:
+            await asyncio.sleep(3600)
+            if db_instance.db is not None:
+                await reminders.process_reminders(db_instance.db)
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error("Reminder scheduler error: %s", e)
+            await asyncio.sleep(60)
+
+
 @app.on_event("startup")
 async def startup_db_client():
+    global reminder_task
     await connect_to_mongo()
     await initialize_db()
-    logger.info("✅ Backend started — Rustomjee Sales Intelligence API")
+    reminder_task = asyncio.create_task(_reminder_scheduler())
+    if db_instance.db is not None:
+        asyncio.create_task(reminders.process_reminders(db_instance.db))
+    logger.info("Backend started — Rustomjee Sales Intelligence API (reminder scheduler active)")
 
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
+    global reminder_task
+    if reminder_task:
+        reminder_task.cancel()
     await close_mongo_connection()
 
 
@@ -106,6 +133,8 @@ app.include_router(
 app.include_router(
     agents.router, prefix="/api/agents", tags=["Agents"], dependencies=_auth_dep
 )
+app.include_router(tasks.router, prefix="/api", tags=["Tasks"], dependencies=_auth_dep)
+app.include_router(reminders.router, prefix="/api", tags=["Reminders"], dependencies=_auth_dep)
 
 
 def _and_queries(*parts: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -273,29 +302,7 @@ async def get_call_history_filters(db=Depends(get_db)):
             }
         )
 
-        upload_batches = []
-        pipeline = [
-            {"$match": {"upload_batch_id": {"$nin": ["", None]}}},
-            {
-                "$group": {
-                    "_id": "$upload_batch_id",
-                    "name": {"$first": "$upload_batch_name"},
-                    "count": {"$sum": 1},
-                }
-            },
-            {"$sort": {"count": -1}},
-            {"$limit": 100},
-        ]
-        for row in await db.call_history.aggregate(pipeline).to_list(100):
-            bid = row.get("_id")
-            if bid:
-                upload_batches.append(
-                    {
-                        "id": str(bid),
-                        "name": (row.get("name") or str(bid))[:200],
-                        "count": int(row.get("count") or 0),
-                    }
-                )
+        upload_batches = await CampaignService(db).list_upload_batches_for_filters(limit=100)
 
         return {
             "campaigns": campaigns_merged,

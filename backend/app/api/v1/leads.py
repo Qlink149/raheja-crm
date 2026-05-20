@@ -439,12 +439,13 @@ async def upload_leads(
         "futwork_pushed": pushed_count if push_to_futwork else 0,
         "futwork_failed": failed_count if push_to_futwork else 0,
     }
-    try:
-        await db.lead_upload_history.insert_one(history_doc)
-    except Exception:
-        logger.exception(
-            "Failed to record lead_upload_history | upload_id=%s", upload_id
-        )
+    if pushed_count > 0:
+        try:
+            await db.lead_upload_history.insert_one(history_doc)
+        except Exception:
+            logger.exception(
+                "Failed to record lead_upload_history | upload_id=%s", upload_id
+            )
 
     return {
         "upload_id": upload_id,
@@ -469,7 +470,10 @@ async def assign_lead(
     assigned_user_id = payload.get("assigned_user_id")
     if not assigned_user_id:
         raise HTTPException(status_code=400, detail="assigned_user_id is required")
-    ok = await AssignmentService(db).assign_lead(lead_id, assigned_user_id)
+    notes = (payload.get("notes") or "").strip()
+    ok = await AssignmentService(db).assign_lead(
+        lead_id, assigned_user_id, transfer_notes=notes
+    )
     if not ok:
         raise HTTPException(status_code=404, detail="Lead or user not found")
     return {"status": "success", "lead_id": lead_id, "assigned_user_id": assigned_user_id}

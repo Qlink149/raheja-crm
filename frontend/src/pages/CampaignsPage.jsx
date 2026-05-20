@@ -19,9 +19,10 @@ import {
 } from "lucide-react";
 import UploadLeadsModal from "../components/UploadLeadsModal";
 import LeadUploadDetailsModal from "../components/LeadUploadDetailsModal";
+import BulkFutworkPushModal from "../components/BulkFutworkPushModal";
 import EmptyState from "../components/feedback/EmptyState";
 import { CampaignSkeleton } from "../components/feedback/Skeletons";
-import { api, isBackendConfigured } from "../lib/api";
+import { api, campaignsAPI, isBackendConfigured } from "../lib/api";
 
 const LEAD_UPLOAD_MAX_MB = 10;
 import { Button } from "../components/ui/button";
@@ -81,10 +82,21 @@ const CampaignsPage = () => {
   const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
   const [retryingFailed, setRetryingFailed] = useState(false);
   const [detailsUploadId, setDetailsUploadId] = useState(null);
+  const [eligibleFutworkCount, setEligibleFutworkCount] = useState(null);
+  const [bulkPushModalOpen, setBulkPushModalOpen] = useState(false);
 
   const fetchUploadHistory = useCallback(async () => {
     const res = await api.get("/campaigns/current/upload-history");
     setUploadHistory(Array.isArray(res.data) ? res.data : []);
+  }, []);
+
+  const fetchEligibleFutworkCount = useCallback(async () => {
+    try {
+      const res = await campaignsAPI.getBulkFutworkEligibleCount();
+      setEligibleFutworkCount(res.data?.eligible_count ?? 0);
+    } catch {
+      setEligibleFutworkCount(null);
+    }
   }, []);
 
   const fetchCampaign = useCallback(async (refreshStats) => {
@@ -120,6 +132,7 @@ const CampaignsPage = () => {
       try {
         await fetchCampaign(refreshStats);
         await fetchUploadHistory();
+        await fetchEligibleFutworkCount();
       } catch (e) {
         const msg =
           e?.response?.data?.detail ||
@@ -131,7 +144,7 @@ const CampaignsPage = () => {
         setLoading(false);
       }
     },
-    [fetchCampaign, fetchUploadHistory]
+    [fetchCampaign, fetchUploadHistory, fetchEligibleFutworkCount]
   );
 
   useEffect(() => {
@@ -146,12 +159,30 @@ const CampaignsPage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const hasProcessingBulkPush = uploadHistory.some(
+    (row) => row.source === "bulk_push" && row.status === "processing"
+  );
+
+  useEffect(() => {
+    if (!hasProcessingBulkPush || !isBackendConfigured()) return undefined;
+    const id = setInterval(async () => {
+      try {
+        await fetchUploadHistory();
+        await fetchEligibleFutworkCount();
+      } catch {
+        /* ignore poll errors */
+      }
+    }, 5000);
+    return () => clearInterval(id);
+  }, [hasProcessingBulkPush, fetchUploadHistory, fetchEligibleFutworkCount]);
+
   const handleMainRefresh = async () => {
     setRefreshingMain(true);
     setError(null);
     try {
       await fetchCampaign(false);
       await fetchUploadHistory();
+      await fetchEligibleFutworkCount();
       setLastUpdatedAt(new Date());
       toast.success("Refreshed");
     } catch (e) {
@@ -488,12 +519,19 @@ const CampaignsPage = () => {
                   <span className="text-white">Mobile</span> (flexible header names accepted).
                   Each Lead ID is unique; the same mobile with different IDs creates separate leads.
                 </p>
+                {eligibleFutworkCount != null ? (
+                  <p className="text-sm text-[#A3A3A3] rounded-lg border border-white/5 bg-white/[0.02] px-4 py-3">
+                    <span className="text-white font-medium tabular-nums">{eligibleFutworkCount}</span>{" "}
+                    leads in the database can still be pushed to Futwork (pending or failed sync,
+                    valid phone + Lead ID).
+                  </p>
+                ) : null}
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex flex-wrap items-center gap-2 text-sm text-[#A3A3A3]">
                     <Clock className="h-4 w-4 text-[#C5A059]" />
                     <span>Recent uploads</span>
                     <Badge variant="secondary" className="bg-white/10 text-[#A3A3A3]">
-                      {uploadHistory.length} entries
+                      {uploadHistory.length} batch{uploadHistory.length === 1 ? "" : "es"}
                     </Badge>
                     <span className="inline-flex items-center gap-1 text-emerald-400">
                       <Check className="h-4 w-4" />
@@ -514,6 +552,20 @@ const CampaignsPage = () => {
                         <Upload className="h-4 w-4 mr-2" />
                       )}
                       Upload New Leads
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="border-[#C5A059]/40 text-[#C5A059] hover:bg-[#C5A059]/10"
+                      onClick={() => setBulkPushModalOpen(true)}
+                      disabled={
+                        !campaign?.futwork_push_enabled ||
+                        eligibleFutworkCount == null ||
+                        eligibleFutworkCount < 1
+                      }
+                    >
+                      <PhoneCall className="h-4 w-4 mr-2" />
+                      Push DB to Futwork
                     </Button>
                     <Button
                       type="button"
@@ -565,6 +617,7 @@ const CampaignsPage = () => {
                     <TableHeader>
                       <TableRow className="border-white/10 hover:bg-transparent">
                         <TableHead className="text-[#A3A3A3]">Batch name</TableHead>
+                        <TableHead className="text-[#A3A3A3]">Type</TableHead>
                         <TableHead className="text-[#A3A3A3]">Date</TableHead>
                         <TableHead className="text-[#A3A3A3]">Processed</TableHead>
                         <TableHead className="text-[#A3A3A3]">Unprocessed</TableHead>
@@ -592,6 +645,17 @@ const CampaignsPage = () => {
                                   {row.batch_name || row.filename || "—"}
                                 </button>
                               </TableCell>
+                              <TableCell>
+                                {row.source === "bulk_push" ? (
+                                  <Badge className="bg-violet-600/20 text-violet-300 border-violet-500/30">
+                                    DB push
+                                  </Badge>
+                                ) : (
+                                  <Badge className="bg-white/10 text-[#A3A3A3] border-white/10">
+                                    CSV
+                                  </Badge>
+                                )}
+                              </TableCell>
                               <TableCell className="text-white font-medium">
                                 {tooltipLine ? (
                                   <Tooltip>
@@ -607,7 +671,14 @@ const CampaignsPage = () => {
                                 )}
                               </TableCell>
                               <TableCell className="py-3 px-4 text-[#C5A059] font-medium tabular-nums">
-                                {row.processed ?? 0}
+                                {row.status === "processing" ? (
+                                  <span className="inline-flex items-center gap-2 text-amber-300">
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                    Processing…
+                                  </span>
+                                ) : (
+                                  row.processed ?? 0
+                                )}
                               </TableCell>
                               <TableCell className="py-3 px-4">
                                 <span className="text-[#A3A3A3] tabular-nums">
@@ -660,6 +731,17 @@ const CampaignsPage = () => {
             }}
             uploadId={detailsUploadId}
             onUpdated={fetchUploadHistory}
+          />
+
+          <BulkFutworkPushModal
+            open={bulkPushModalOpen}
+            onOpenChange={setBulkPushModalOpen}
+            eligibleCount={eligibleFutworkCount ?? 0}
+            futworkEnabled={Boolean(campaign?.futwork_push_enabled)}
+            onStarted={async () => {
+              await fetchUploadHistory();
+              await fetchEligibleFutworkCount();
+            }}
           />
     </motion.div>
     </TooltipProvider>

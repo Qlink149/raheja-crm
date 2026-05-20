@@ -435,6 +435,61 @@ class LeadService:
             doc["campaign_id"] = campaign_id
         await self.db.leads.update_one({"client_lead_id": cid}, {"$set": doc})
 
+    @staticmethod
+    def _bulk_futwork_push_eligible_query() -> Dict[str, Any]:
+        """Leads eligible for DB bulk Futwork push (pending/failed, valid phone + client_lead_id)."""
+        return {
+            "client_lead_id": {"$exists": True, "$nin": ["", None]},
+            "mobile_digits": {"$regex": r"^\d{10}$"},
+            "$or": [
+                {"futwork_sync_status": {"$in": ["pending", "failed"]}},
+                {"futwork_sync_status": {"$exists": False}},
+                {"futwork_sync_status": None},
+            ],
+        }
+
+    async def count_leads_eligible_for_bulk_futwork_push(self) -> int:
+        return await self.db.leads.count_documents(self._bulk_futwork_push_eligible_query())
+
+    async def fetch_leads_eligible_for_bulk_futwork_push(
+        self,
+        limit: int,
+    ) -> List[Dict[str, Any]]:
+        lim = max(1, int(limit))
+        cursor = (
+            self.db.leads.find(self._bulk_futwork_push_eligible_query(), {"_id": 0})
+            .sort("created_at", 1)
+            .limit(lim)
+        )
+        return await cursor.to_list(length=lim)
+
+    async def tag_leads_with_upload_batch(
+        self,
+        lead_ids: List[str],
+        *,
+        upload_batch_id: str,
+        upload_batch_name: str,
+    ) -> int:
+        """Set upload_batch_id/name on leads before Futwork push."""
+        ids = [str(i).strip() for i in lead_ids if str(i).strip()]
+        if not ids:
+            return 0
+        batch_id = (upload_batch_id or "").strip()
+        batch_name = (upload_batch_name or "").strip()
+        if not batch_id:
+            return 0
+        result = await self.db.leads.update_many(
+            {"id": {"$in": ids}},
+            {
+                "$set": {
+                    "upload_batch_id": batch_id,
+                    "upload_batch_name": batch_name,
+                    "updated_at": datetime.utcnow(),
+                }
+            },
+        )
+        return int(result.modified_count)
+
     async def leads_for_futwork_push_by_batch(
         self,
         upload_batch_id: str,

@@ -15,11 +15,13 @@ from ...utils.campaign_stats import (
 )
 from ...utils.csv_processor import normalize_phone
 from ...utils.webhook_lead import (
-    build_lead_lookup_clauses,
     call_history_lead_id_value,
-    lead_lookup_filter,
+    has_webhook_id_hints,
     lead_update_filter,
+    resolve_lead_for_webhook,
 )
+from ...core.time_utils import utc_now
+from ...services.notification_service import create_notification, _lead_display_name
 from ...services.structured_ai_service import (
     StructuredAIService,
     not_worthy_call_history_patch,
@@ -58,45 +60,37 @@ def _as_dict(value: Any) -> Dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+_LEAD_RESOLVE_PROJECTION = {
+    "id": 1,
+    "last_call_status_raw": 1,
+    "last_call_status": 1,
+    "futwork_lead_id": 1,
+    "assigned_user_id": 1,
+}
+
+
 async def _resolve_existing_lead(
     db,
     *,
     webhook_futwork_id: str,
     echo_client_id: str,
+    raw_phone: str,
     mobile_digits: str,
 ) -> Optional[Dict[str, Any]]:
-    """Match lead by Futwork/client IDs, then single-match mobile_digits fallback."""
-    clauses = build_lead_lookup_clauses(webhook_futwork_id, echo_client_id)
-    flt = lead_lookup_filter(clauses)
-    existing_lead: Optional[Dict[str, Any]] = None
-    if flt:
-        existing_lead = await db.leads.find_one(
-            flt,
-            {
-                "id": 1,
-                "last_call_status_raw": 1,
-                "last_call_status": 1,
-                "futwork_lead_id": 1,
-            },
+    """Match lead: client_lead_id, futwork_lead_id, then phone candidate variants."""
+    existing_lead = await resolve_lead_for_webhook(
+        db,
+        webhook_futwork_id=webhook_futwork_id,
+        echo_client_id=echo_client_id,
+        raw_phone=raw_phone,
+        projection=_LEAD_RESOLVE_PROJECTION,
+    )
+    if not existing_lead and echo_client_id:
+        logger.error(
+            "Futwork webhook: client_lead_id echo present but no lead matched | client_lead_id=%s | futwork_lead_id=%s",
+            echo_client_id,
+            webhook_futwork_id,
         )
-    if not existing_lead and len(mobile_digits) >= 10:
-        matches = await db.leads.find(
-            {"mobile_digits": mobile_digits},
-            {
-                "id": 1,
-                "last_call_status_raw": 1,
-                "last_call_status": 1,
-                "futwork_lead_id": 1,
-            },
-        ).to_list(2)
-        if len(matches) == 1:
-            existing_lead = matches[0]
-        elif len(matches) > 1:
-            logger.warning(
-                "Futwork webhook: ambiguous mobile_digits match | digits=%s | count=%s",
-                mobile_digits,
-                len(matches),
-            )
     return existing_lead
 
 
@@ -253,6 +247,7 @@ async def futwork_webhook(
         db,
         webhook_futwork_id=webhook_futwork_id,
         echo_client_id=echo_client_id,
+        raw_phone=raw_phone,
         mobile_digits=mobile_digits,
     )
     lead_update_flt = lead_update_filter(existing_lead)
@@ -387,7 +382,7 @@ async def futwork_webhook(
     lead_result = None
     if lead_update_flt:
         lead_result = await db.leads.update_one(lead_update_flt, {"$set": lead_set})
-    elif build_lead_lookup_clauses(webhook_futwork_id, echo_client_id) or mobile_digits:
+    elif has_webhook_id_hints(webhook_futwork_id, echo_client_id) or mobile_digits:
         logger.warning(
             "Futwork webhook: no lead matched | futwork_lead_id=%s | client_lead_id=%s | callSid=%s",
             webhook_futwork_id,
@@ -433,11 +428,101 @@ async def futwork_webhook(
                             "$unset": {"aiPersonaSummary": "", "strategicNextMove": ""},
                         },
                     )
+                    if existing_lead and existing_lead.get("assigned_user_id"):
+                        lead_row = await db.leads.find_one(
+                            {"id": existing_lead["id"]},
+                            {"_id": 0, "id": 1, "full_name": 1, "first_name": 1, "last_name": 1, "assigned_user_id": 1, "assigned_to": 1},
+                        )
+                        if lead_row:
+                            se = unified_extraction
+                            summary = (getattr(se, "call_summary", None) or "")[:120]
+                            if not summary and effective_transcript:
+                                summary = str(effective_transcript)[:120] + "..."
+                            today = utc_now().strftime("%Y-%m-%d")
+                            await create_notification(
+                                db,
+                                type="ai_call_summary",
+                                title="AI Call Summary",
+                                message=summary or f"High-intent call ({duration_seconds or 0}s)",
+                                lead_id=lead_row["id"],
+                                lead_name=_lead_display_name(lead_row),
+                                recipient_user_id=lead_row["assigned_user_id"],
+                                recipient_name=lead_row.get("assigned_to") or "",
+                                assigned_to=lead_row.get("assigned_to") or "",
+                                severity="medium",
+                                urgency="action_needed",
+                                dedupe_key=f"notification:call:{call_sid}:{today}",
+                            )
                 else:
-                    logger.warning(
-                        "Skipping lead AI patch (no matched lead) | callSid=%s",
-                        call_sid,
+                    late_lead = await resolve_lead_for_webhook(
+                        db,
+                        webhook_futwork_id=webhook_futwork_id,
+                        echo_client_id=echo_client_id,
+                        raw_phone=raw_phone,
+                        projection=_LEAD_RESOLVE_PROJECTION,
                     )
+                    late_flt = lead_update_filter(late_lead)
+                    if late_flt and unified_extraction is not None:
+                        lead_patch = {
+                            **lead_set,
+                            **svc.to_db_lead_patch_unified(unified_extraction),
+                        }
+                        await db.leads.update_one(
+                            late_flt,
+                            {
+                                "$set": lead_patch,
+                                "$unset": {"aiPersonaSummary": "", "strategicNextMove": ""},
+                            },
+                        )
+                        lid = str(late_lead.get("id") or "")
+                        if lid:
+                            await db.call_history.update_one(
+                                {"id": call_sid},
+                                {"$set": {"lead_id": lid}},
+                            )
+                        logger.info(
+                            "Linked orphan call to lead after AI extraction | callSid=%s | lead_id=%s",
+                            call_sid,
+                            lid,
+                        )
+                        if late_lead.get("assigned_user_id"):
+                            lead_row = await db.leads.find_one(
+                                {"id": late_lead["id"]},
+                                {
+                                    "_id": 0,
+                                    "id": 1,
+                                    "full_name": 1,
+                                    "first_name": 1,
+                                    "last_name": 1,
+                                    "assigned_user_id": 1,
+                                    "assigned_to": 1,
+                                },
+                            )
+                            if lead_row:
+                                se = unified_extraction
+                                summary = (getattr(se, "call_summary", None) or "")[:120]
+                                if not summary and effective_transcript:
+                                    summary = str(effective_transcript)[:120] + "..."
+                                today = utc_now().strftime("%Y-%m-%d")
+                                await create_notification(
+                                    db,
+                                    type="ai_call_summary",
+                                    title="AI Call Summary",
+                                    message=summary or f"High-intent call ({duration_seconds or 0}s)",
+                                    lead_id=lead_row["id"],
+                                    lead_name=_lead_display_name(lead_row),
+                                    recipient_user_id=lead_row["assigned_user_id"],
+                                    recipient_name=lead_row.get("assigned_to") or "",
+                                    assigned_to=lead_row.get("assigned_to") or "",
+                                    severity="medium",
+                                    urgency="action_needed",
+                                    dedupe_key=f"notification:call:{call_sid}:{today}",
+                                )
+                    else:
+                        logger.warning(
+                            "Skipping lead AI patch (no matched lead) | callSid=%s",
+                            call_sid,
+                        )
         except Exception:
             logger.exception("Structured AI extraction failed | callSid=%s", call_sid)
 

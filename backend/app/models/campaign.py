@@ -78,6 +78,8 @@ class LeadUploadHistoryEntry(BaseModel):
     created_at: datetime
     filename: str = ""
     batch_name: str = ""
+    source: str = ""
+    status: str = ""
     original_csv_secure_url: str = ""
     original_csv_public_id: str = ""
     processed: int = 0
@@ -86,6 +88,21 @@ class LeadUploadHistoryEntry(BaseModel):
     unprocessed: int = 0
     futwork_pushed: int = 0
     futwork_failed: int = 0
+
+
+class BulkFutworkPushRequest(BaseModel):
+    batch_name: str = Field(..., min_length=1, max_length=200)
+    limit: int = Field(..., ge=1, le=5000)
+
+
+class BulkFutworkPushStartResponse(BaseModel):
+    batch_id: str
+    status: str
+    requested: int
+
+
+class BulkFutworkEligibleCountResponse(BaseModel):
+    eligible_count: int
 
 
 class LeadUploadBatchRename(BaseModel):

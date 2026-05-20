@@ -36,6 +36,13 @@ class Settings:
     # Cloudinary for CSV storage
     CLOUDINARY_URL: str = os.environ.get("CLOUDINARY_URL", "").strip()
 
+    # WhatsApp (Gupshup) — optional; reminders no-op when unset
+    GUPSHUP_TOKEN: str = os.environ.get("GUPSHUP_TOKEN", "").strip()
+    GUPSHUP_API_KEY: str = os.environ.get("GUPSHUP_API_KEY", "").strip()
+    GUPSHUP_APP_ID: str = os.environ.get("GUPSHUP_APP_ID", "").strip()
+    GUPSHUP_SOURCE_PHONE: str = os.environ.get("GUPSHUP_SOURCE_PHONE", "").strip()
+    GUPSHUP_BASE_URL: str = "https://api.gupshup.io"
+
     ROOT_DIR: Path = ROOT_DIR
 
     @staticmethod

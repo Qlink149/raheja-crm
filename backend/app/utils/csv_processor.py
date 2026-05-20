@@ -47,9 +47,64 @@ COLUMN_MAPPINGS = {
 }
 
 def normalize_phone(phone: str) -> str:
-    """Normalize phone number to digits only and extract last 10 digits."""
-    digits = re.sub(r'\D', '', str(phone))
-    return digits[-10:] if len(digits) >= 10 else digits
+    """
+    Normalize to 10-digit Indian mobile for storage and lookup.
+
+    Handles +91 / 91 prefix and trunk 0 before 10-digit local numbers.
+    """
+    digits = re.sub(r"\D", "", str(phone or ""))
+    if not digits:
+        return ""
+    if len(digits) >= 12 and digits.startswith("91"):
+        return digits[-10:]
+    if len(digits) == 11 and digits.startswith("0"):
+        return digits[1:]
+    if len(digits) >= 10:
+        return digits[-10:]
+    return digits
+
+
+def _ten_digit_alt_with_leading_nine(ten_digits: str) -> str:
+    """8696979791 -> 9869697979 (replace leading 6/7/8 with 9, keep 10 digits)."""
+    if len(ten_digits) != 10 or ten_digits[0] not in "678":
+        return ""
+    return "9" + ten_digits[1:]
+
+
+def phone_lookup_candidates(phone: str) -> list[str]:
+    """
+    Distinct 10-digit keys to match leads when Futwork/CRM formats differ.
+
+    Example: Futwork 08696979791 -> 8696979791 and 9869697979 (leading-9 variant).
+    """
+    raw = re.sub(r"\D", "", str(phone or ""))
+    primary = normalize_phone(phone)
+    if not primary and not raw:
+        return []
+
+    out: list[str] = []
+    seen: set[str] = set()
+
+    def add(value: str) -> None:
+        v = (value or "").strip()
+        if len(v) == 10 and v.isdigit() and v not in seen:
+            seen.add(v)
+            out.append(v)
+
+    add(primary)
+    alt = _ten_digit_alt_with_leading_nine(primary)
+    if alt:
+        add(alt)
+
+    if len(raw) == 11 and raw.startswith("0"):
+        body = raw[1:]
+        if body != primary:
+            add(body)
+            alt_body = _ten_digit_alt_with_leading_nine(body)
+            if alt_body:
+                add(alt_body)
+
+    return out
 
 def get_budget_category(budget_str: str) -> str:
     budget_str = str(budget_str).lower().strip()

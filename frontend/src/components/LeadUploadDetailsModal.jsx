@@ -10,13 +10,15 @@ import {
 } from "./ui/dialog";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
-import { api, getApiBase } from "../lib/api";
+import { api, downloadAuthenticatedFile } from "../lib/api";
 
 const LeadUploadDetailsModal = ({ open, onOpenChange, uploadId, onUpdated }) => {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [detail, setDetail] = useState(null);
   const [editName, setEditName] = useState("");
+  const [downloadingOriginal, setDownloadingOriginal] = useState(false);
+  const [downloadingUnprocessed, setDownloadingUnprocessed] = useState(false);
 
   useEffect(() => {
     if (!open || !uploadId) {
@@ -48,7 +50,42 @@ const LeadUploadDetailsModal = ({ open, onOpenChange, uploadId, onUpdated }) => 
     };
   }, [open, uploadId]);
 
-  const base = getApiBase();
+  const originalCsvFilename = () => {
+    const base = (detail?.batch_name || detail?.filename || "upload").trim();
+    const safe = base.replace(/[^\w.\-]+/g, "_").replace(/^_+|_+$/g, "") || "upload";
+    return safe.toLowerCase().endsWith(".csv") ? safe : `${safe}.csv`;
+  };
+
+  const handleDownloadOriginal = async () => {
+    if (!uploadId) return;
+    setDownloadingOriginal(true);
+    try {
+      await downloadAuthenticatedFile(
+        `/campaigns/current/upload-history/${encodeURIComponent(uploadId)}/download-original`,
+        originalCsvFilename()
+      );
+    } catch (e) {
+      toast.error(e?.message || e?.response?.data?.detail || "Could not download original CSV");
+    } finally {
+      setDownloadingOriginal(false);
+    }
+  };
+
+  const handleDownloadUnprocessed = async () => {
+    if (!uploadId) return;
+    setDownloadingUnprocessed(true);
+    try {
+      const stem = (detail?.batch_name || "upload").trim().replace(/[^\w.\-]+/g, "_") || "upload";
+      await downloadAuthenticatedFile(
+        `/campaigns/current/upload-history/${encodeURIComponent(uploadId)}/unprocessed.csv`,
+        `${stem}_unprocessed.csv`
+      );
+    } catch (e) {
+      toast.error(e?.message || e?.response?.data?.detail || "Could not download unprocessed rows");
+    } finally {
+      setDownloadingUnprocessed(false);
+    }
+  };
 
   const handleRename = async () => {
     const name = editName.trim();
@@ -85,6 +122,11 @@ const LeadUploadDetailsModal = ({ open, onOpenChange, uploadId, onUpdated }) => 
           </div>
         ) : detail ? (
           <div className="space-y-4 text-sm">
+            {detail.source === "bulk_push" ? (
+              <p className="text-[#A3A3A3] text-xs rounded border border-violet-500/20 bg-violet-500/10 px-3 py-2">
+                This batch was created from a DB bulk Futwork push (no CSV file).
+              </p>
+            ) : null}
             <div className="grid grid-cols-2 gap-2 text-[#A3A3A3]">
               <span>Batch name</span>
               <span className="text-white">{detail.batch_name || "—"}</span>
@@ -119,27 +161,37 @@ const LeadUploadDetailsModal = ({ open, onOpenChange, uploadId, onUpdated }) => 
             </div>
 
             <div className="flex flex-wrap gap-2 pt-2">
-              {detail.original_csv_secure_url ? (
-                <a
-                  href={`${base}/campaigns/current/upload-history/${encodeURIComponent(uploadId)}/download-original`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center justify-center rounded-md border border-[#C5A059]/40 bg-transparent px-4 py-2 text-sm font-medium text-[#C5A059] hover:bg-[#C5A059]/10"
+              {detail.source !== "bulk_push" && detail.original_csv_secure_url ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={downloadingOriginal}
+                  onClick={handleDownloadOriginal}
+                  className="border-[#C5A059]/40 text-[#C5A059] hover:bg-[#C5A059]/10"
                 >
-                  <Download className="w-4 h-4 mr-2" />
+                  {downloadingOriginal ? (
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  ) : (
+                    <Download className="w-4 h-4 mr-2" />
+                  )}
                   Original CSV
-                </a>
+                </Button>
               ) : null}
-              {detail.has_unprocessed_csv ? (
-                <a
-                  href={`${base}/campaigns/current/upload-history/${encodeURIComponent(uploadId)}/unprocessed.csv`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center justify-center rounded-md border border-white/20 bg-transparent px-4 py-2 text-sm font-medium text-white hover:bg-white/10"
+              {detail.source !== "bulk_push" && detail.has_unprocessed_csv ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={downloadingUnprocessed}
+                  onClick={handleDownloadUnprocessed}
+                  className="border-white/20 text-white hover:bg-white/10"
                 >
-                  <Download className="w-4 h-4 mr-2" />
+                  {downloadingUnprocessed ? (
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  ) : (
+                    <Download className="w-4 h-4 mr-2" />
+                  )}
                   Unprocessed rows
-                </a>
+                </Button>
               ) : null}
             </div>
           </div>
