@@ -3,6 +3,8 @@ import hashlib
 from datetime import datetime
 from typing import Dict, Any, Tuple, Optional
 
+from .lead_tag_sync import reconcile_temperature_with_status
+
 # Column mappings from CSV headers to internal DB field names
 COLUMN_MAPPINGS = {
     # ---- Standard Rustomjee CRM columns ----
@@ -361,7 +363,7 @@ def process_row_to_lead(row: Dict[str, Any]) -> Dict[str, Any]:
     if lead.get("client_lead_id") and not lead.get("external_id"):
         lead["external_id"] = lead["client_lead_id"]
 
-    return lead
+    return reconcile_temperature_with_status(lead)
 
 
 def _parse_iso_datetime(raw: Any) -> Optional[datetime]:

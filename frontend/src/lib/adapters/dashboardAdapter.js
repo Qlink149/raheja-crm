@@ -112,6 +112,27 @@ export function parseProjectsPayload(data) {
   return { projects: [], meta: null };
 }
 
+/** Build Virtual Customer URL params for dashboard KPI drill-down. */
+export function buildVirtualDrillParams(bucket, timeFilter, projectFilter, dateRange) {
+  const params = new URLSearchParams();
+  params.set("futwork_sync_status", "all");
+  const statsParams = buildStatsParams(timeFilter, projectFilter, dateRange);
+  if (statsParams.project) params.set("project", statsParams.project);
+  if (statsParams.days != null) params.set("days", String(statsParams.days));
+  if (statsParams.start_date) params.set("start_date", statsParams.start_date);
+  if (statsParams.end_date) params.set("end_date", statsParams.end_date);
+  if (bucket) params.set("dashboard_bucket", bucket);
+  return params;
+}
+
+export const DASHBOARD_BUCKET_LABELS = {
+  cold: "Cold Leads",
+  dormant: "Dormant Leads",
+  hot: "Hot Leads",
+  qualified: "Qualified Leads",
+  vip_pipeline: "VIP Pipeline",
+};
+
 export function buildStatsParams(timeFilter, projectFilter, dateRange) {
   const params = {};
   if (projectFilter && projectFilter !== "all") {

@@ -27,6 +27,9 @@ class Settings:
     # Optional caps for Campaign Information card (read-only in API)
     FUTWORK_MAX_ATTEMPTS: str = os.environ.get("FUTWORK_MAX_ATTEMPTS", "").strip()
     FUTWORK_CALL_RATE_LIMIT: str = os.environ.get("FUTWORK_CALL_RATE_LIMIT", "").strip()
+    AUTO_CREATE_LEAD_FROM_ORPHAN_WEBHOOK: str = os.environ.get(
+        "AUTO_CREATE_LEAD_FROM_ORPHAN_WEBHOOK", "true"
+    ).strip().lower()
 
     # CSV upload guardrails
     LEAD_UPLOAD_MAX_BYTES: int = int(
@@ -61,5 +64,9 @@ class Settings:
     @property
     def futwork_call_rate_limit(self):
         return Settings._optional_int(self.FUTWORK_CALL_RATE_LIMIT)
+
+    @property
+    def auto_create_lead_from_orphan_webhook(self) -> bool:
+        return self.AUTO_CREATE_LEAD_FROM_ORPHAN_WEBHOOK not in ("0", "false", "no", "off")
 
 settings = Settings()

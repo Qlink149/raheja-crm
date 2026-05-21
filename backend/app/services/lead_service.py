@@ -13,6 +13,11 @@ from ..utils.csv_processor import (
 )
 from ..core.config import settings
 from .futwork_push import post_one_lead_to_futwork
+from .qualification_buckets import (
+    VALID_DASHBOARD_BUCKETS,
+    build_base_query,
+    bucket_query,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +63,9 @@ class LeadService:
 
         parts: List[Dict[str, Any]] = []
 
+        if filters:
+            filters = dict(filters)
+
         if search:
             esc = re.escape(search)
             digits = re.sub(r"\D+", "", search)
@@ -77,9 +85,42 @@ class LeadService:
 
         other: Dict[str, Any] = {}
         vip_expand = False
+        dashboard_bucket = None
+        days = None
+        start_date = None
+        end_date = None
+        date_project = None
+
+        if filters:
+            dashboard_bucket = filters.pop("dashboard_bucket", None)
+            raw_days = filters.pop("days", None)
+            if raw_days is not None and raw_days != "":
+                try:
+                    days = int(raw_days)
+                except (TypeError, ValueError):
+                    days = None
+            start_date = filters.pop("start_date", None)
+            end_date = filters.pop("end_date", None)
+            if dashboard_bucket and "project" in filters:
+                date_project = filters.pop("project")
+
+        skip_qual_filters = bool(
+            dashboard_bucket
+            and str(dashboard_bucket).strip().lower() in VALID_DASHBOARD_BUCKETS
+        )
+
         if filters:
             for key, value in filters.items():
                 if value is None or value == "all" or value == "":
+                    continue
+                if skip_qual_filters and key in (
+                    "qualification_category",
+                    "temperature",
+                    "is_vip",
+                    "project",
+                    "status",
+                    "sales_qualification",
+                ):
                     continue
                 if key == "qualification_category":
                     other["qualification_category"] = value
@@ -88,7 +129,25 @@ class LeadService:
                     other["upload_batch_id"] = value
                     continue
                 if key == "disposition":
-                    other["disposition"] = {"$regex": f"^{re.escape(str(value))}$", "$options": "i"}
+                    esc = re.escape(str(value))
+                    parts.append(
+                        {
+                            "$or": [
+                                {
+                                    "disposition": {
+                                        "$regex": f"^{esc}$",
+                                        "$options": "i",
+                                    }
+                                },
+                                {
+                                    "ai_disposition": {
+                                        "$regex": f"^{esc}$",
+                                        "$options": "i",
+                                    }
+                                },
+                            ]
+                        }
+                    )
                     continue
                 if key == "project":
                     if str(value) == "__none__":
@@ -126,7 +185,7 @@ class LeadService:
                 else:
                     other[key] = value
 
-        if vip_expand:
+        if vip_expand and not skip_qual_filters:
             parts.append(
                 {
                     "$or": [
@@ -136,6 +195,16 @@ class LeadService:
                     ]
                 }
             )
+
+        has_date_filter = days is not None or start_date or end_date
+
+        if skip_qual_filters:
+            base = build_base_query(date_project, days, start_date, end_date)
+            parts.append(bucket_query(base, str(dashboard_bucket).strip().lower()))
+        elif has_date_filter:
+            base = build_base_query(date_project, days, start_date, end_date)
+            if base:
+                parts.append(base)
 
         if other:
             parts.append(other)
@@ -152,15 +221,36 @@ class LeadService:
         filters: Optional[Dict[str, Any]] = None,
     ) -> int:
         query = self._build_leads_query(search, filters)
+        return await self.count_by_query(query)
+
+    async def count_by_query(self, query: Dict[str, Any]) -> int:
+        if not query:
+            return await self.db.leads.count_documents({})
         return await self.db.leads.count_documents(query)
 
-    async def get_leads(self,
-                        skip: int = 0,
-                        limit: int = 50,
-                        search: Optional[str] = None,
-                        filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    async def get_leads(
+        self,
+        skip: int = 0,
+        limit: int = 50,
+        search: Optional[str] = None,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, Any]]:
         query = self._build_leads_query(search, filters)
-        cursor = self.db.leads.find(query, {"_id": 0}).sort("updated_at", -1).skip(skip).limit(limit)
+        return await self.find_leads_by_query(query, skip, limit)
+
+    async def find_leads_by_query(
+        self,
+        query: Dict[str, Any],
+        skip: int = 0,
+        limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        match = query if query else {}
+        cursor = (
+            self.db.leads.find(match, {"_id": 0})
+            .sort("updated_at", -1)
+            .skip(skip)
+            .limit(limit)
+        )
         return await cursor.to_list(length=limit)
 
     async def get_lead_by_id(self, lead_id: str) -> Optional[Dict[str, Any]]:

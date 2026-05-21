@@ -10,6 +10,7 @@ from ..core.time_utils import utc_now
 from ..models.structured_extraction import UnifiedStructuredExtraction
 from ..services.structured_ai_service import StructuredAIService
 from .csv_processor import normalize_phone, phone_lookup_candidates
+from .lead_qualification_tags import canonical_lead_tags_from_doc
 from .webhook_lead import lead_update_filter, resolve_lead_for_webhook
 
 logger = logging.getLogger(__name__)
@@ -91,7 +92,6 @@ async def create_lead_from_orphan_call(
         else str(uuid.uuid4())
     )
     name = _display_name_from_call(call_doc, extraction)
-
     lead_doc: Dict[str, Any] = {
         "id": lead_id,
         "client_lead_id": client_lead_id,
@@ -101,7 +101,7 @@ async def create_lead_from_orphan_call(
         "futwork_sync_status": "pushed",
         "source": "futwork_orphan_call",
         "status": "Inquiry",
-        "temperature": "Warm",
+        "temperature": "",
         "created_at": now,
         "updated_at": now,
     }
@@ -117,6 +117,8 @@ async def create_lead_from_orphan_call(
         lead_doc.update(patch)
         if patch.get("disposition"):
             lead_doc["disposition"] = patch["disposition"]
+
+    lead_doc.update(canonical_lead_tags_from_doc(lead_doc))
 
     if dry_run:
         _dry_run_lead_cache[mobile_digits] = lead_doc
@@ -203,8 +205,68 @@ async def apply_orphan_call_link(
 
     await db.call_history.update_one({"id": call_id}, {"$set": {"lead_id": lead_id}})
     if lead_patch:
+        merged = {**lead_patch}
+        merged.update(canonical_lead_tags_from_doc({**lead, **merged}))
         await db.leads.update_one(
             flt,
-            {"$set": lead_patch, "$unset": {"aiPersonaSummary": "", "strategicNextMove": ""}},
+            {"$set": merged, "$unset": {"aiPersonaSummary": "", "strategicNextMove": ""}},
         )
     return True
+
+
+async def ensure_lead_for_unmatched_webhook(
+    db,
+    *,
+    call_doc: Dict[str, Any],
+    lead_set_patch: Dict[str, Any],
+    auto_create_enabled: bool = True,
+    auto_assign_new: bool = True,
+) -> tuple[Optional[Dict[str, Any]], bool, str]:
+    """
+    Create or link a CRM lead when a terminal Futwork webhook has no matched lead.
+
+    Returns (lead_doc, is_new, reason) where is_new is True only on fresh insert.
+    """
+    if not auto_create_enabled:
+        return None, False, "skipped_disabled"
+
+    lead, reason = await resolve_or_link_orphan_call(
+        db,
+        call_doc,
+        create_missing=True,
+    )
+    if not lead or not lead.get("id"):
+        return None, False, reason
+
+    is_new = reason == "created_new"
+    await apply_orphan_call_link(db, call_doc, lead)
+
+    flt = lead_update_filter(lead)
+    if flt and lead_set_patch:
+        await db.leads.update_one(flt, {"$set": lead_set_patch})
+
+    if is_new and auto_assign_new:
+        try:
+            from ..services.assignment_service import AssignmentService
+
+            await AssignmentService(db).auto_assign_lead(str(lead["id"]))
+            refreshed = await db.leads.find_one(
+                {"id": lead["id"]},
+                {"_id": 0, "id": 1, "assigned_user_id": 1, "client_lead_id": 1},
+            )
+            if refreshed:
+                lead = refreshed
+        except Exception:
+            logger.exception(
+                "Auto-assign failed for orphan webhook lead | lead_id=%s",
+                lead.get("id"),
+            )
+
+    logger.info(
+        "Orphan webhook lead ensured | call_id=%s | lead_id=%s | reason=%s | is_new=%s",
+        call_doc.get("id") or call_doc.get("call_sid"),
+        lead.get("id"),
+        reason,
+        is_new,
+    )
+    return lead, is_new, reason

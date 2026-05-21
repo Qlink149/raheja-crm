@@ -40,6 +40,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs"
 import EmptyState from "../components/feedback/EmptyState";
 import { CallTableSkeleton } from "../components/feedback/Skeletons";
 import { api, campaignsAPI } from "../lib/api";
+import { formatDateTimeIST } from "../lib/dateUtils";
 
 const PAGE_SIZE = 50;
 const ROW_HEIGHT = 64; // px, matches the grid row's effective height
@@ -56,17 +57,7 @@ const formatDuration = (seconds) => {
   return `${secs}s`;
 };
 
-const formatDate = (dateStr) => {
-  if (!dateStr) return "N/A";
-  const date = new Date(dateStr);
-  return date.toLocaleString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-};
+const formatDate = (dateStr) => formatDateTimeIST(dateStr);
 
 const DISPOSITION_STYLES = {
   Interested: "bg-emerald-900/30 text-emerald-300 border-emerald-500/30",
@@ -208,6 +199,7 @@ const StatTile = memo(function StatTile({
   value,
   tone = "gold",
   delay = 0,
+  title,
 }) {
   const toneMap = {
     gold: { iconBg: "bg-[#C5A059]/20", iconColor: "text-[#C5A059]", labelColor: "text-[#C5A059]" },
@@ -224,6 +216,7 @@ const StatTile = memo(function StatTile({
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay, duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
       className="glass-card rounded-xl p-6 hover-lift"
+      title={title}
     >
       <div className="flex items-center gap-3 mb-3">
         <div className={`p-3 ${t.iconBg} rounded-lg flex-shrink-0`}>
@@ -587,10 +580,11 @@ const AICallingPage = () => {
               />
               <StatTile
                 icon={Clock}
-                label="Avg Duration"
+                label="Avg Connected Duration"
                 value={formatDuration(stats.avgDuration)}
                 tone="purple"
                 delay={0.2}
+                title="Average talk time for calls with duration greater than 0"
               />
             </motion.div>
             </div>

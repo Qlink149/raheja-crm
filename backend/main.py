@@ -9,6 +9,7 @@ import logging
 
 from app.core.config import settings
 from app.core.database import connect_to_mongo, close_mongo_connection, initialize_db, get_db, db_instance
+from app.core.time_utils import serialize_datetime_utc
 from app.core.security import get_current_user
 from app.api.v1 import (
     leads,
@@ -268,7 +269,9 @@ def _doc_to_call_row(doc: Dict[str, Any]) -> Dict[str, Any]:
         "duration": int(doc.get("duration", 0) or 0),
         "recording_url": doc.get("recording_url", ""),
         "transcript": doc.get("transcript", ""),
-        "created_at": doc.get("started_at", doc.get("created_at", "")),
+        "created_at": serialize_datetime_utc(
+            doc.get("started_at") or doc.get("created_at")
+        ),
         "campaign": campaign_name,
         "lead_id": doc.get("lead_id", ""),
         "direction": "outbound",
@@ -374,7 +377,12 @@ async def get_call_history_summary(
         if semi_interested == 0:
             semi_interested = await db.call_history.count_documents(semi_fallback)
 
-        pipeline = [{"$match": base}, {"$group": {"_id": None, "avg": {"$avg": "$duration"}}}]
+        connected_q = _and_queries(base, {"duration": {"$gt": 0}})
+        connected_calls = await db.call_history.count_documents(connected_q)
+        pipeline = [
+            {"$match": connected_q},
+            {"$group": {"_id": None, "avg": {"$avg": "$duration"}, "n": {"$sum": 1}}},
+        ]
         agg = await db.call_history.aggregate(pipeline).to_list(1)
         avg_duration = 0.0
         if agg and agg[0].get("avg") is not None:
@@ -385,7 +393,8 @@ async def get_call_history_summary(
             "completed": completed,
             "interested": interested,
             "semi_interested": semi_interested,
-            "avg_duration_seconds": round(avg_duration) if total else 0,
+            "connected_calls": connected_calls,
+            "avg_duration_seconds": round(avg_duration) if connected_calls else 0,
         }
     except Exception as e:
         logger.error("Error in call history summary: %s", e)
@@ -394,6 +403,7 @@ async def get_call_history_summary(
             "completed": 0,
             "interested": 0,
             "semi_interested": 0,
+            "connected_calls": 0,
             "avg_duration_seconds": 0,
         }
 

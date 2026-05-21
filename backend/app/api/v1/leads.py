@@ -11,6 +11,7 @@ from ...core.database import get_db
 from ...core.rbac import require_admin
 from ...core.security import get_current_user
 from ...services.lead_service import LeadService
+from ...services.qualification_buckets import VALID_DASHBOARD_BUCKETS
 from ...services.campaign_service import CampaignService
 from ...services.assignment_service import AssignmentService, rep_lead_filter
 from ...models.lead import LeadDetail
@@ -42,17 +43,33 @@ def _build_list_filters(
     assigned_rep=None,
     sales_qualification=None,
     futwork_sync_status=None,
+    dashboard_bucket=None,
+    days=None,
+    start_date=None,
+    end_date=None,
 ):
+    bucket_key = (dashboard_bucket or "").strip().lower()
+    use_bucket = bucket_key in VALID_DASHBOARD_BUCKETS
+
     filters = {
         "budget_category": budget_category,
         "location_category": location_category,
         "intent_category": intent_category,
-        "temperature": temperature,
-        "qualification_category": qualification_category,
     }
+    if not use_bucket:
+        filters["temperature"] = temperature
+        filters["qualification_category"] = qualification_category
+    else:
+        filters["dashboard_bucket"] = bucket_key
+    if days is not None:
+        filters["days"] = days
+    if start_date:
+        filters["start_date"] = start_date
+    if end_date:
+        filters["end_date"] = end_date
     if project and project != "all":
         filters["project"] = project
-    if vip_only:
+    if vip_only and not use_bucket:
         filters["is_vip"] = True
     batch_id = campaignId or None
     if batch_id:
@@ -97,6 +114,10 @@ async def list_leads(
     assigned_rep: Optional[str] = None,
     sales_qualification: Optional[str] = None,
     futwork_sync_status: Optional[str] = None,
+    dashboard_bucket: Optional[str] = None,
+    days: Optional[int] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     current_user: dict = Depends(get_current_user),
     db=Depends(get_db),
 ):
@@ -117,15 +138,17 @@ async def list_leads(
         assigned_rep=assigned_rep,
         sales_qualification=sales_qualification,
         futwork_sync_status=futwork_sync_status,
+        dashboard_bucket=dashboard_bucket,
+        days=days,
+        start_date=start_date,
+        end_date=end_date,
     )
     role = (current_user.get("role") or "sales").lower()
     query = service._build_leads_query(search, filters)
     if role == "sales":
         rep_filter = rep_lead_filter(current_user["id"], current_user["full_name"])
         query = {"$and": [query, rep_filter]} if query else rep_filter
-        return await service.get_leads(skip, limit, None, query)
-
-    return await service.get_leads(skip, limit, search, filters)
+    return await service.find_leads_by_query(query, skip, limit)
 
 
 @router.get("/count/all")
@@ -146,6 +169,10 @@ async def get_leads_count(
     assigned_rep: Optional[str] = None,
     sales_qualification: Optional[str] = None,
     futwork_sync_status: Optional[str] = None,
+    dashboard_bucket: Optional[str] = None,
+    days: Optional[int] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     current_user: dict = Depends(get_current_user),
     db=Depends(get_db),
 ):
@@ -166,15 +193,17 @@ async def get_leads_count(
         assigned_rep=assigned_rep,
         sales_qualification=sales_qualification,
         futwork_sync_status=futwork_sync_status,
+        dashboard_bucket=dashboard_bucket,
+        days=days,
+        start_date=start_date,
+        end_date=end_date,
     )
     role = (current_user.get("role") or "sales").lower()
     query = service._build_leads_query(search, filters)
     if role == "sales":
         rep_filter = rep_lead_filter(current_user["id"], current_user["full_name"])
         query = {"$and": [query, rep_filter]} if query else rep_filter
-        count = await service.count_leads(None, query)
-    else:
-        count = await service.count_leads(search, filters)
+    count = await service.count_by_query(query)
     return {"count": count}
 
 

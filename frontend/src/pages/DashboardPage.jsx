@@ -9,6 +9,7 @@ import {
   mapDispositionBreakdown,
   parseProjectsPayload,
   buildStatsParams,
+  buildVirtualDrillParams,
   formatDashboardNumber,
   REGIONAL_COLORS,
 } from "../lib/adapters/dashboardAdapter";
@@ -57,29 +58,36 @@ const LEAD_CRITERIA = {
   cold: {
     title: "Cold Lead Criteria",
     rules: [
-      "No response to calls for 7+ days",
-      "Lead status marked as 'Lost' or 'Not Interested'",
-      "No engagement with marketing materials",
-      "Budget mismatch with available projects",
+      "Qualification category is Cold (area or timeline without budget match)",
+      "Matches Virtual Customer qualification tag and dashboard drill-down",
     ],
   },
   dormant: {
     title: "Dormant Lead Criteria",
     rules: [
-      "No activity or updates in 7+ days",
-      "Last contact attempt was unsuccessful",
-      "No site visit scheduled",
-      "Pending follow-up overdue by 5+ days",
+      "Qualification category is Dormant",
+      "Matches dashboard drill-down and card badge",
     ],
   },
   hot: {
     title: "Hot Lead Criteria",
     rules: [
-      "Recent positive engagement (last 3 days)",
-      "Site visit completed or scheduled",
-      "Budget aligned with project pricing",
-      "Expressed strong purchase intent",
-      "Responded positively to follow-ups",
+      "Qualification category is Hot (budget match, area not matched)",
+      "Matches Virtual Customer qualification tag and dashboard drill-down",
+    ],
+  },
+  qualified: {
+    title: "Qualified Lead Criteria",
+    rules: [
+      "Qualification category is Qualified (budget, area, and timeline match)",
+      "Matches Virtual Customer qualification tag and dashboard drill-down",
+    ],
+  },
+  vip_pipeline: {
+    title: "VIP Pipeline Criteria",
+    rules: [
+      "Qualification category is VIP Pipeline",
+      "Matches dashboard drill-down and card badge",
     ],
   },
 };
@@ -153,8 +161,30 @@ const DashboardPage = () => {
 
   const handleDispositionClick = (entry) => {
     if (!entry?.name) return;
-    navigate(`/virtual-customer?disposition=${encodeURIComponent(entry.name)}`);
+    navigate(`/virtual-customer?disposition=${encodeURIComponent(entry.name)}&futwork_sync_status=all`);
   };
+
+  const handleStatClick = (bucket) => {
+    const params = buildVirtualDrillParams(
+      bucket,
+      timeFilter,
+      projectFilter,
+      dateRange
+    );
+    navigate(`/virtual-customer?${params.toString()}`);
+  };
+
+  const statTileProps = (bucket) => ({
+    role: "button",
+    tabIndex: 0,
+    onClick: () => handleStatClick(bucket),
+    onKeyDown: (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        handleStatClick(bucket);
+      }
+    },
+  });
   const projectNames = projectsForGrid.map((p) => p.name);
 
   const LeadCriteriaTooltip = ({ type }) => {
@@ -305,7 +335,11 @@ const DashboardPage = () => {
         transition={{ delay: 0.1 }}
         className="grid grid-cols-1 md:grid-cols-2 gap-4"
       >
-        <div className="glass-card rounded-lg p-6 border-l-4 border-blue-500 card-hover" data-testid="cold-leads-tile">
+        <div
+          className="glass-card rounded-lg p-6 border-l-4 border-blue-500 card-hover cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#C5A059]/50"
+          data-testid="cold-leads-tile"
+          {...statTileProps("cold")}
+        >
           <div className="flex items-center justify-between">
             <div>
               <div className="flex items-center">
@@ -321,7 +355,11 @@ const DashboardPage = () => {
           </div>
         </div>
 
-        <div className="glass-card rounded-lg p-6 border-l-4 border-orange-500 card-hover" data-testid="dormant-leads-tile">
+        <div
+          className="glass-card rounded-lg p-6 border-l-4 border-orange-500 card-hover cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#C5A059]/50"
+          data-testid="dormant-leads-tile"
+          {...statTileProps("dormant")}
+        >
           <div className="flex items-center justify-between">
             <div>
               <div className="flex items-center">
@@ -344,7 +382,11 @@ const DashboardPage = () => {
         transition={{ delay: 0.2 }}
         className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4"
       >
-        <div className="glass-card rounded-lg p-6 card-hover" data-testid="total-leads-tile">
+        <div
+          className="glass-card rounded-lg p-6 card-hover cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#C5A059]/50"
+          data-testid="total-leads-tile"
+          {...statTileProps(null)}
+        >
           <div className="flex items-center justify-between mb-4">
             <div className="w-12 h-12 rounded-lg bg-[#C5A059]/20 flex items-center justify-center">
               <Users className="text-[#C5A059]" size={24} />
@@ -354,17 +396,26 @@ const DashboardPage = () => {
           <p className="font-serif text-3xl text-white mt-1">{stats?.total_leads ?? 0}</p>
         </div>
 
-        <div className="glass-card rounded-lg p-6 card-hover" data-testid="vip-leads-tile">
+        <div
+          className="glass-card rounded-lg p-6 card-hover cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#C5A059]/50"
+          data-testid="vip-leads-tile"
+          {...statTileProps("vip_pipeline")}
+        >
           <div className="flex items-center justify-between mb-4">
             <div className="w-12 h-12 rounded-lg bg-purple-500/20 flex items-center justify-center">
               <Crown className="text-purple-500" size={24} />
             </div>
+            <LeadCriteriaTooltip type="vip_pipeline" />
           </div>
           <p className="text-[#A1A1AA] text-sm">VIP Pipeline</p>
           <p className="font-serif text-3xl text-white mt-1">{stats?.vip_pipeline ?? 0}</p>
         </div>
 
-        <div className="glass-card rounded-lg p-6 card-hover" data-testid="hot-leads-tile">
+        <div
+          className="glass-card rounded-lg p-6 card-hover cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#C5A059]/50"
+          data-testid="hot-leads-tile"
+          {...statTileProps("hot")}
+        >
           <div className="flex items-center justify-between mb-4">
             <div className="w-12 h-12 rounded-lg bg-red-500/20 flex items-center justify-center">
               <Flame className="text-red-500" size={24} />
@@ -375,11 +426,16 @@ const DashboardPage = () => {
           <p className="font-serif text-3xl text-white mt-1">{stats?.hot_leads ?? 0}</p>
         </div>
 
-        <div className="glass-card rounded-lg p-6 card-hover" data-testid="qualified-leads-tile">
+        <div
+          className="glass-card rounded-lg p-6 card-hover cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#C5A059]/50"
+          data-testid="qualified-leads-tile"
+          {...statTileProps("qualified")}
+        >
           <div className="flex items-center justify-between mb-4">
             <div className="w-12 h-12 rounded-lg bg-green-500/20 flex items-center justify-center">
               <CheckCircle className="text-green-500" size={24} />
             </div>
+            <LeadCriteriaTooltip type="qualified" />
           </div>
           <p className="text-[#A1A1AA] text-sm">Qualified Leads</p>
           <p className="font-serif text-3xl text-white mt-1">{stats?.qualified_leads ?? 0}</p>

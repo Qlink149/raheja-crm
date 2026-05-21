@@ -15,6 +15,8 @@ import {
   Snowflake,
   Sun,
   Building2,
+  CheckCircle,
+  TrendingDown,
 } from "lucide-react";
 import { Input } from "../components/ui/input";
 import { Badge } from "../components/ui/badge";
@@ -23,6 +25,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs"
 import EmptyState from "../components/feedback/EmptyState";
 import { LeadGridSkeleton } from "../components/feedback/Skeletons";
 import { api, campaignsAPI } from "../lib/api";
+import { DASHBOARD_BUCKET_LABELS } from "../lib/adapters/dashboardAdapter";
 import {
   Select,
   SelectContent,
@@ -89,17 +92,37 @@ const VirtualCustomerPage = () => {
   const [assignedRepFilter, setAssignedRepFilter] = useState(
     searchParams.get("assigned_rep") || "all"
   );
+  const [dashboardBucketFilter, setDashboardBucketFilter] = useState(
+    searchParams.get("dashboard_bucket") || ""
+  );
+  const [daysFilter, setDaysFilter] = useState(searchParams.get("days") || "");
+  const [startDateFilter, setStartDateFilter] = useState(searchParams.get("start_date") || "");
+  const [endDateFilter, setEndDateFilter] = useState(searchParams.get("end_date") || "");
   const [uploadBatches, setUploadBatches] = useState([]);
+
   const [futworkSyncFilter, setFutworkSyncFilter] = useState(() => {
     const fromUrl = searchParams.get("futwork_sync_status");
     if (fromUrl) return fromUrl;
-    if (searchParams.get("project") || searchParams.get("assigned_rep")) return "all";
+    if (
+      searchParams.get("project") ||
+      searchParams.get("assigned_rep") ||
+      searchParams.get("dashboard_bucket") ||
+      searchParams.get("days") ||
+      searchParams.get("start_date")
+    ) {
+      return "all";
+    }
     return "pushed";
   });
 
   useEffect(() => {
     if (searchParams.get("futwork_sync_status")) return;
-    const hasDrillDown = searchParams.get("project") || searchParams.get("assigned_rep");
+    const hasDrillDown =
+      searchParams.get("project") ||
+      searchParams.get("assigned_rep") ||
+      searchParams.get("dashboard_bucket") ||
+      searchParams.get("days") ||
+      searchParams.get("start_date");
     if (!hasDrillDown) {
       const next = new URLSearchParams(searchParams);
       next.set("futwork_sync_status", "pushed");
@@ -119,10 +142,20 @@ const VirtualCustomerPage = () => {
     setIntentFilter(searchParams.get("intent") || "all");
     setVipFilter(searchParams.get("vip") === "true");
     setAssignedRepFilter(searchParams.get("assigned_rep") || "all");
+    setDashboardBucketFilter(searchParams.get("dashboard_bucket") || "");
+    setDaysFilter(searchParams.get("days") || "");
+    setStartDateFilter(searchParams.get("start_date") || "");
+    setEndDateFilter(searchParams.get("end_date") || "");
     const fw = searchParams.get("futwork_sync_status");
     if (fw) {
       setFutworkSyncFilter(fw);
-    } else if (searchParams.get("project") || searchParams.get("assigned_rep")) {
+    } else if (
+      searchParams.get("project") ||
+      searchParams.get("assigned_rep") ||
+      searchParams.get("dashboard_bucket") ||
+      searchParams.get("days") ||
+      searchParams.get("start_date")
+    ) {
       setFutworkSyncFilter("all");
     } else {
       setFutworkSyncFilter("pushed");
@@ -176,6 +209,11 @@ const VirtualCustomerPage = () => {
     assignedRepFilter,
     futworkSyncFilter,
     debouncedSearch,
+    dashboardBucketFilter,
+    daysFilter,
+    startDateFilter,
+    endDateFilter,
+    searchParams.toString(),
   ]);
 
   // Infinite scroll observer
@@ -205,24 +243,46 @@ const VirtualCustomerPage = () => {
     }
   };
 
+  const urlDashboardBucket =
+    searchParams.get("dashboard_bucket") || dashboardBucketFilter || "";
+  const urlDays = searchParams.get("days") || daysFilter || "";
+  const urlStartDate = searchParams.get("start_date") || startDateFilter || "";
+  const urlEndDate = searchParams.get("end_date") || endDateFilter || "";
   const buildParams = (skip = 0) => {
     const params = new URLSearchParams();
+    const bucket = searchParams.get("dashboard_bucket") || dashboardBucketFilter;
+    const days = searchParams.get("days") || daysFilter;
+    const startDate = searchParams.get("start_date") || startDateFilter;
+    const endDate = searchParams.get("end_date") || endDateFilter;
+    const project =
+      searchParams.get("project") || (projectFilter !== "all" ? projectFilter : "");
+
     if (budgetFilter !== "all") params.append("budget_category", budgetFilter);
     if (locationFilter !== "all") params.append("location_category", locationFilter);
-    if (vipFilter) params.append("vip_only", "true");
+    if (!bucket && vipFilter) params.append("vip_only", "true");
     if (intentFilter !== "all") params.append("intent_category", intentFilter);
-    if (temperatureFilter !== "all") params.append("temperature", temperatureFilter);
-    if (qualificationFilter !== "all")
+    if (!bucket && qualificationFilter !== "all") {
       params.append("qualification_category", qualificationFilter);
-    if (projectFilter !== "all") params.append("project", projectFilter);
+    }
+    if (project && project !== "all") params.append("project", project);
     if (campaignIdFilter !== "all") params.append("campaignId", campaignIdFilter);
     if (dispositionFilter !== "all") params.append("disposition", dispositionFilter);
-    if (statusFilter !== "all") params.append("status", statusFilter);
+    if (!bucket && statusFilter !== "all") params.append("status", statusFilter);
     if (assignedRepFilter !== "all") params.append("assigned_rep", assignedRepFilter);
     if (debouncedSearch) params.append("search", debouncedSearch);
-    if (futworkSyncFilter && futworkSyncFilter !== "all") {
+
+    if (bucket) {
+      params.append("dashboard_bucket", bucket);
+      params.append("futwork_sync_status", "all");
+    } else if (days || startDate) {
+      params.append("futwork_sync_status", "all");
+    } else if (futworkSyncFilter && futworkSyncFilter !== "all") {
       params.append("futwork_sync_status", futworkSyncFilter);
     }
+
+    if (days) params.append("days", days);
+    if (startDate) params.append("start_date", startDate);
+    if (endDate) params.append("end_date", endDate);
     params.append("skip", skip);
     params.append("limit", PAGE_SIZE);
     return params;
@@ -345,6 +405,51 @@ const VirtualCustomerPage = () => {
     }
   };
 
+  const getQualificationBadgeClass = (qc) => {
+    const v = (qc || "").trim();
+    if (v === "VIP Pipeline") return "bg-purple-500/20 text-purple-300 border border-purple-500/30";
+    if (v === "Dormant") return "bg-orange-500/20 text-orange-300 border border-orange-500/30";
+    if (v === "Qualified") return "bg-emerald-900/30 text-emerald-300 border border-emerald-500/30";
+    if (v === "Hot") return "badge-hot";
+    if (v === "Cold") return "badge-cold";
+    if (v === "all") return "bg-[#C5A059] text-black";
+    return "text-[#A3A3A3] bg-white/5 border border-white/5";
+  };
+
+  const isNonContactableStatus = (status) => {
+    const s = (status || "").trim().toLowerCase().replace(/\s+/g, " ");
+    return (
+      /^non[\s-]*contactable$/.test(s) ||
+      s === "lost" ||
+      s === "dnc" ||
+      s === "do not call" ||
+      s === "not reachable"
+    );
+  };
+
+  /** Primary card tag: qualification hierarchy (not legacy temperature). */
+  const getLeadQualificationTag = (lead) => {
+    if (isNonContactableStatus(lead?.status)) return "";
+    return (lead?.qualification_category || "").trim();
+  };
+
+  const getQualificationIcon = (qc) => {
+    switch (qc) {
+      case "Hot":
+        return <Flame className="w-4 h-4 text-red-400" />;
+      case "Cold":
+        return <Snowflake className="w-4 h-4 text-blue-400" />;
+      case "Qualified":
+        return <CheckCircle className="w-4 h-4 text-emerald-400" />;
+      case "VIP Pipeline":
+        return <Crown className="w-4 h-4 text-[#C5A059]" />;
+      case "Dormant":
+        return <TrendingDown className="w-4 h-4 text-orange-400" />;
+      default:
+        return null;
+    }
+  };
+
   const getTemperatureBadgeClass = (temp) => {
     switch (temp) {
       case "Hot":
@@ -394,7 +499,7 @@ const VirtualCustomerPage = () => {
   const budgetOptions = ["all", "<1 Cr", "1-2 Cr", "2-5 Cr", "5 Cr+"];
   const locationOptions = ["all", "South Mumbai", "Thane", "Bandra/BKC", "Suburbs", "Other"];
   const intentOptions = ["all", "Investor", "Home Seeker"];
-  const temperatureOptions = ["all", "Hot", "Warm", "Cold"];
+  const qualificationOptions = ["all", "Qualified", "VIP Pipeline", "Hot", "Cold", "Dormant"];
 
   const handleFutworkSyncChange = (value) => {
     setFutworkSyncFilter(value);
@@ -418,6 +523,20 @@ const VirtualCustomerPage = () => {
     setSearchParams(next, { replace: true });
   };
 
+  const clearDashboardDrill = () => {
+    const next = new URLSearchParams(searchParams);
+    next.delete("dashboard_bucket");
+    next.delete("days");
+    next.delete("start_date");
+    next.delete("end_date");
+    setSearchParams(next, { replace: true });
+  };
+
+  const dashboardDrillLabel =
+    DASHBOARD_BUCKET_LABELS[urlDashboardBucket] ||
+    DASHBOARD_BUCKET_LABELS[dashboardBucketFilter] ||
+    "All Leads";
+
   return (
     <motion.div className="space-y-8">
       <motion.div
@@ -431,6 +550,32 @@ const VirtualCustomerPage = () => {
         <p className="text-[#A1A1AA] mt-1">
           {totalCount > 0 ? `${totalCount.toLocaleString()} leads in pipeline` : "Browse and filter your lead pipeline"}
         </p>
+        {(urlDashboardBucket || urlDays || urlStartDate) && (
+          <div
+            className="mt-3 flex flex-wrap items-center gap-2"
+            data-testid="dashboard-drill-banner"
+          >
+            <Badge
+              variant="outline"
+              className="border-[#C5A059]/40 bg-[#C5A059]/10 text-[#C5A059]"
+            >
+              Dashboard: {dashboardDrillLabel}
+              {urlDays ? ` · ${urlDays} days` : ""}
+              {urlStartDate && urlEndDate
+                ? ` · ${urlStartDate} – ${urlEndDate}`
+                : urlStartDate
+                  ? ` · from ${urlStartDate}`
+                  : ""}
+            </Badge>
+            <button
+              type="button"
+              onClick={clearDashboardDrill}
+              className="text-xs text-[#A1A1AA] hover:text-white underline"
+            >
+              Clear dashboard filter
+            </button>
+          </div>
+        )}
         <motion.div className="mt-4 inline-flex rounded-lg border border-white/10 bg-[#141414] p-1">
           <button
             type="button"
@@ -481,26 +626,34 @@ const VirtualCustomerPage = () => {
             <h2 className="font-serif text-xl text-white mb-6">Categories</h2>
 
             {/* Category Buttons */}
-            <div className="space-y-2 mb-8">
-              {categories.map((cat) => (
-                <button
-                  key={cat.id}
-                  data-testid={`category-${cat.id}`}
-                  onClick={() => handleCategoryChange(cat.id)}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-300 ${
-                    activeCategory === cat.id
-                      ? "bg-[#C5A059]/20 border border-[#C5A059]/30 text-[#C5A059]"
-                      : "text-[#A3A3A3] hover:bg-white/5 hover:text-white"
-                  }`}
-                >
-                  <cat.icon className="w-5 h-5" strokeWidth={1.5} />
-                  <span className="text-sm font-medium">{cat.label}</span>
-                </button>
-              ))}
-            </div>
+            {urlDashboardBucket ? (
+              <p className="text-xs text-[#A1A1AA] mb-6 px-1">
+                Category filters locked while{" "}
+                <span className="text-[#C5A059]">{dashboardDrillLabel}</span> is active.
+                Clear dashboard filter to browse by category.
+              </p>
+            ) : (
+              <div className="space-y-2 mb-8">
+                {categories.map((cat) => (
+                  <button
+                    key={cat.id}
+                    data-testid={`category-${cat.id}`}
+                    onClick={() => handleCategoryChange(cat.id)}
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-300 ${
+                      activeCategory === cat.id
+                        ? "bg-[#C5A059]/20 border border-[#C5A059]/30 text-[#C5A059]"
+                        : "text-[#A3A3A3] hover:bg-white/5 hover:text-white"
+                    }`}
+                  >
+                    <cat.icon className="w-5 h-5" strokeWidth={1.5} />
+                    <span className="text-sm font-medium">{cat.label}</span>
+                  </button>
+                ))}
+              </div>
+            )}
 
             {/* Sub-filters based on category */}
-            {activeCategory === "budget" && (
+            {!urlDashboardBucket && activeCategory === "budget" && (
               <div className="space-y-2">
                 <p className="text-xs uppercase tracking-widest text-[#C5A059] font-semibold mb-3">
                   Budget Range
@@ -522,7 +675,7 @@ const VirtualCustomerPage = () => {
               </div>
             )}
 
-            {activeCategory === "location" && (
+            {!urlDashboardBucket && activeCategory === "location" && (
               <div className="space-y-2">
                 <p className="text-xs uppercase tracking-widest text-[#C5A059] font-semibold mb-3">
                   Location
@@ -544,7 +697,7 @@ const VirtualCustomerPage = () => {
               </div>
             )}
 
-            {activeCategory === "intent" && (
+            {!urlDashboardBucket && activeCategory === "intent" && (
               <div className="space-y-2">
                 <p className="text-xs uppercase tracking-widest text-[#C5A059] font-semibold mb-3">
                   Purchase Intent
@@ -566,7 +719,7 @@ const VirtualCustomerPage = () => {
               </div>
             )}
 
-            {activeCategory === "project" && (
+            {!urlDashboardBucket && activeCategory === "project" && (
               <div className="space-y-2">
                 <p className="text-xs uppercase tracking-widest text-[#C5A059] font-semibold mb-3">
                   Projects
@@ -602,33 +755,35 @@ const VirtualCustomerPage = () => {
               </div>
             )}
 
-            {/* Temperature Filter */}
+            {/* Qualification tag filter */}
             <div className="mt-8 pt-6 border-t border-white/10">
               <p className="text-xs uppercase tracking-widest text-[#C5A059] font-semibold mb-3">
-                Lead Temperature
+                Lead Qualification
               </p>
-              <div className="flex flex-wrap gap-2">
-                {temperatureOptions.map((opt) => (
-                  <button
-                    key={opt}
-                    data-testid={`temp-filter-${opt}`}
-                    onClick={() => setTemperatureFilter(opt)}
-                    className={`px-3 py-1 text-xs rounded-full transition-all ${
-                      temperatureFilter === opt
-                        ? opt === "Hot"
-                          ? "badge-hot"
-                          : opt === "Warm"
-                          ? "badge-warm"
-                          : opt === "Cold"
-                          ? "badge-cold"
-                          : "bg-[#C5A059] text-black"
-                        : "bg-white/5 text-[#A3A3A3] hover:bg-white/10"
-                    }`}
-                  >
-                    {opt === "all" ? "All" : opt}
-                  </button>
-                ))}
-              </div>
+              {urlDashboardBucket ? (
+                <p className="text-xs text-[#A1A1AA] px-1">
+                  Locked while dashboard filter{" "}
+                  <span className="text-[#C5A059]">{dashboardDrillLabel}</span> is active.
+                  Clear dashboard filter to change qualification.
+                </p>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {qualificationOptions.map((opt) => (
+                    <button
+                      key={opt}
+                      data-testid={`qc-filter-${opt}`}
+                      onClick={() => setQualificationFilter(opt)}
+                      className={`px-3 py-1 text-xs rounded-full transition-all ${
+                        qualificationFilter === opt
+                          ? getQualificationBadgeClass(opt === "all" ? "" : opt)
+                          : "bg-white/5 text-[#A3A3A3] hover:bg-white/10"
+                      } ${qualificationFilter === opt && opt === "all" ? "bg-[#C5A059] text-black" : ""}`}
+                    >
+                      {opt === "all" ? "All" : opt}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           </motion.div>
 
@@ -736,14 +891,16 @@ const VirtualCustomerPage = () => {
                             {lead.project || "N/A"}
                           </p>
                           <div className="flex items-center gap-2 flex-wrap">
-                            <span
-                              className={`px-2 py-0.5 text-xs rounded-sm flex items-center gap-1 flex-shrink-0 ${getTemperatureBadgeClass(
-                                lead.temperature
-                              )}`}
-                            >
-                              {getTemperatureIcon(lead.temperature)}
-                              {lead.temperature}
-                            </span>
+                            {getLeadQualificationTag(lead) ? (
+                              <span
+                                className={`px-2 py-0.5 text-xs rounded-sm flex items-center gap-1 flex-shrink-0 ${getQualificationBadgeClass(
+                                  getLeadQualificationTag(lead)
+                                )}`}
+                              >
+                                {getQualificationIcon(getLeadQualificationTag(lead))}
+                                {getLeadQualificationTag(lead)}
+                              </span>
+                            ) : null}
                             <PlatformSyncBadge status={lead.futwork_sync_status} />
                             <span
                               className={`text-xs whitespace-nowrap px-2 py-0.5 rounded-sm tabular-nums ${

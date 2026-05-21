@@ -50,6 +50,7 @@ from app.utils.csv_processor import (  # noqa: E402
     process_presales_dump_row,
     slugify_agent_email,
 )
+from app.utils.lead_tag_sync import reconcile_temperature_with_status  # noqa: E402
 
 load_dotenv()
 
@@ -295,7 +296,7 @@ def _build_lead_patch(
     if is_insert:
         patch["futwork_sync_status"] = "pending"
 
-    return patch
+    return reconcile_temperature_with_status(patch)
 
 
 def _register_lead_in_maps(doc: Dict[str, Any], by_client: Dict[str, Dict]) -> None:

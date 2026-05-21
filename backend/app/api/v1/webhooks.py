@@ -1,6 +1,5 @@
 import json
 import logging
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
@@ -14,6 +13,8 @@ from ...utils.campaign_stats import (
     map_futwork_raw_to_live_key,
 )
 from ...utils.csv_processor import normalize_phone
+from ...utils.lead_qualification_tags import apply_canonical_tags_to_lead_patch
+from ...utils.orphan_call_link import ensure_lead_for_unmatched_webhook
 from ...utils.webhook_lead import (
     call_history_lead_id_value,
     has_webhook_id_hints,
@@ -273,7 +274,7 @@ async def futwork_webhook(
         "from_number":      from_number,
         "provider":         provider,
         "provider_call_id": provider_call_id,
-        "updated_at":       datetime.utcnow(),
+        "updated_at":       utc_now(),
     }
     if webhook_futwork_id:
         set_fields["futwork_lead_id"] = webhook_futwork_id
@@ -298,8 +299,8 @@ async def futwork_webhook(
         {"id": call_sid},
         {
             "$set": set_fields,
-            "$setOnInsert": {"created_at": datetime.utcnow()},
-            "$push": {"status_history": {"status": status_raw, "at": datetime.utcnow()}},
+            "$setOnInsert": {"created_at": utc_now()},
+            "$push": {"status_history": {"status": status_raw, "at": utc_now()}},
         },
         upsert=True,
     )
@@ -331,7 +332,7 @@ async def futwork_webhook(
                 {"$or": or_clauses},
                 {
                     "$inc": inc,
-                    "$set": {"updated_at": datetime.utcnow()},
+                    "$set": {"updated_at": utc_now()},
                 },
             )
         except Exception:
@@ -349,7 +350,7 @@ async def futwork_webhook(
     can_advance_lead   = incoming_terminal or not prev_lead_terminal
 
     lead_set: Dict[str, Any] = {
-        "updated_at": datetime.utcnow(),
+        "updated_at": utc_now(),
     }
     if raw_phone:
         lead_set["mobile"] = raw_phone
@@ -361,7 +362,7 @@ async def futwork_webhook(
         lead_set["full_name"] = customer_name
 
     if can_advance_lead:
-        lead_set["last_call_date"]       = datetime.utcnow()
+        lead_set["last_call_date"]       = utc_now()
         lead_set["last_call_status"]     = call_status
         lead_set["last_call_status_raw"] = status_raw
         if duration_seconds:
@@ -378,6 +379,53 @@ async def futwork_webhook(
     # We do not overwrite with empty.
     if lead_set.get("current_residence_location") and not lead_set.get("current_residential_location"):
         lead_set["current_residential_location"] = lead_set.get("current_residence_location")
+
+    lead_set = apply_canonical_tags_to_lead_patch(lead_set, existing_lead or {})
+
+    lead_created = False
+    lead_created_id = ""
+    if (
+        settings.auto_create_lead_from_orphan_webhook
+        and not existing_lead
+        and incoming_terminal
+        and not is_stale_intermediate
+        and len(mobile_digits) == 10
+    ):
+        call_doc_for_orphan = dict(set_fields)
+        call_doc_for_orphan.setdefault("id", call_sid)
+        call_doc_for_orphan.setdefault("call_sid", call_sid)
+        ensured_lead, is_new_lead, orphan_reason = await ensure_lead_for_unmatched_webhook(
+            db,
+            call_doc=call_doc_for_orphan,
+            lead_set_patch=lead_set if can_advance_lead else {
+                k: lead_set[k]
+                for k in ("updated_at", "mobile", "mobile_digits", "full_name", "futwork_lead_id")
+                if k in lead_set
+            },
+            auto_create_enabled=True,
+            auto_assign_new=True,
+        )
+        if ensured_lead and ensured_lead.get("id"):
+            lead_created = is_new_lead
+            lead_created_id = str(ensured_lead["id"])
+            existing_lead = await db.leads.find_one(
+                {"id": lead_created_id},
+                {"_id": 0, **_LEAD_RESOLVE_PROJECTION},
+            )
+            lead_update_flt = lead_update_filter(existing_lead)
+            internal_lead_id = lead_created_id
+            set_fields["lead_id"] = internal_lead_id
+            await db.call_history.update_one(
+                {"id": call_sid},
+                {"$set": {"lead_id": internal_lead_id}},
+            )
+        else:
+            logger.warning(
+                "Futwork webhook: orphan lead ensure failed | callSid=%s | reason=%s | mobile_digits=%s",
+                call_sid,
+                orphan_reason,
+                mobile_digits,
+            )
 
     lead_result = None
     if lead_update_flt:
@@ -421,10 +469,14 @@ async def futwork_webhook(
                     {"$set": svc.to_db_call_history_patch_unified(unified_extraction)},
                 )
                 if lead_update_flt:
+                    ai_lead_patch = apply_canonical_tags_to_lead_patch(
+                        svc.to_db_lead_patch_unified(unified_extraction),
+                        existing_lead or {},
+                    )
                     await db.leads.update_one(
                         lead_update_flt,
                         {
-                            "$set": svc.to_db_lead_patch_unified(unified_extraction),
+                            "$set": ai_lead_patch,
                             "$unset": {"aiPersonaSummary": "", "strategicNextMove": ""},
                         },
                     )
@@ -463,10 +515,13 @@ async def futwork_webhook(
                     )
                     late_flt = lead_update_filter(late_lead)
                     if late_flt and unified_extraction is not None:
-                        lead_patch = {
-                            **lead_set,
-                            **svc.to_db_lead_patch_unified(unified_extraction),
-                        }
+                        lead_patch = apply_canonical_tags_to_lead_patch(
+                            {
+                                **lead_set,
+                                **svc.to_db_lead_patch_unified(unified_extraction),
+                            },
+                            late_lead or {},
+                        )
                         await db.leads.update_one(
                             late_flt,
                             {
@@ -557,20 +612,26 @@ async def futwork_webhook(
                 inc: Dict[str, int] = {f"dispositions.{k}": v for k, v in dispo_delta.items()}
                 await db.campaigns.update_one(
                     {"$or": or_clauses},
-                    {"$inc": inc, "$set": {"updated_at": datetime.utcnow()}},
+                    {"$inc": inc, "$set": {"updated_at": utc_now()}},
                 )
         except Exception:
             logger.exception("Failed to apply disposition delta | callSid=%s", call_sid)
 
     # ---- Final summary log --------------------------------------------------
+    lead_matched = bool(lead_update_flt) and (
+        bool(lead_result and lead_result.matched_count) or bool(lead_created_id)
+    )
     logger.info(
         "Futwork webhook processed | callSid=%s | phase=%s | live_delta=%s | "
-        "lead_advanced=%s | lead_matched=%s",
+        "lead_advanced=%s | lead_matched=%s | lead_created=%s | lead_id=%s | mobile_digits=%s",
         call_sid,
         status_raw,
         live_delta,
         can_advance_lead,
-        bool(lead_result and lead_result.matched_count),
+        lead_matched,
+        lead_created,
+        lead_created_id or (existing_lead or {}).get("id", ""),
+        mobile_digits,
     )
 
     return {
@@ -579,5 +640,7 @@ async def futwork_webhook(
         "phase": status_raw,
         "live_delta": live_delta,
         "lead_advanced": can_advance_lead,
-        "lead_matched": bool(lead_result and lead_result.matched_count),
+        "lead_matched": lead_matched,
+        "lead_created": lead_created,
+        "lead_id": lead_created_id or (existing_lead or {}).get("id", ""),
     }
