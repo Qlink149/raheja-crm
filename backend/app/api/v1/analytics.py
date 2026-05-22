@@ -1,17 +1,17 @@
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends, Query
 
 from ...core.database import get_db
 from ...core.security import get_current_user
-from ...core.time_utils import utc_now
 from ...constants.lead_kpi import (
     DEALS_CLOSED_STATUS_REGEX,
     RNR_STATUS_REGEX,
     SITE_VISIT_STATUS_REGEX,
 )
+from ...services.qualification_buckets import sales_metrics_temperature_add_fields
 from ...utils.csv_processor import normalize_agent_name
 
 router = APIRouter()
@@ -30,55 +30,12 @@ _MANAGER_SUM_KEYS = (
     "negotiation",
 )
 
-DORMANT_INACTIVITY_DAYS = 7
 _INVALID_PROJECT_REGEX = {"$regex": r"^(?i)\s*(unknown|na|n/a|others|null)\s*$"}
 _INVALID_REP_PATTERN = re.compile(r"^\s*(unknown|na|n/a)\s*$", re.IGNORECASE)
 
 
 def _is_invalid_rep_name(name: str) -> bool:
     return bool(_INVALID_REP_PATTERN.match(name or ""))
-
-
-def _stale_activity_clause(cutoff: datetime, cutoff_iso: str) -> dict:
-    no_updated_dt = {"$or": [{"updated_at_dt": {"$exists": False}}, {"updated_at_dt": None}]}
-    no_updated_at = {"$or": [{"updated_at": {"$exists": False}}, {"updated_at": None}]}
-    return {
-        "$or": [
-            {"updated_at_dt": {"$lt": cutoff}},
-            {
-                "$and": [
-                    no_updated_dt,
-                    {"$or": [{"updated_at": {"$lt": cutoff}}, {"updated_at": {"$lt": cutoff_iso}}]},
-                ]
-            },
-            {
-                "$and": [
-                    no_updated_dt,
-                    no_updated_at,
-                    {"$or": [{"created_at_dt": {"$lt": cutoff}}, {"created_at": {"$lt": cutoff_iso}}]},
-                ]
-            },
-        ]
-    }
-
-
-def _non_dormant_terminal_status_clause() -> dict:
-    return {
-        "$nor": [
-            {
-                "$or": [
-                    {"status": {"$regex": r"(?i)^\s*(won|lost|advance\s*paid|closed|booked|dropped|unqualified)\s*$"}},
-                    {"lead_status": {"$regex": r"(?i)^\s*(won|lost|advance\s*paid|closed|booked|dropped|unqualified)\s*$"}},
-                ]
-            }
-        ]
-    }
-
-
-def _dormant_leads_query(base_query: dict) -> dict:
-    cutoff = utc_now() - timedelta(days=DORMANT_INACTIVITY_DAYS)
-    cutoff_iso = cutoff.isoformat()
-    return {"$and": [base_query, _stale_activity_clause(cutoff, cutoff_iso), _non_dormant_terminal_status_clause()]}
 
 
 def _merge_query_with_valid_projects(query: dict) -> dict:
@@ -148,9 +105,7 @@ def _sales_metrics_stages() -> List[Dict[str, Any]]:
         },
         {
             "$addFields": {
-                "hot": {"$cond": [{"$eq": [{"$toLower": {"$ifNull": ["$temperature", ""]}}, "hot"]}, 1, 0]},
-                "warm": {"$cond": [{"$eq": [{"$toLower": {"$ifNull": ["$temperature", ""]}}, "warm"]}, 1, 0]},
-                "cold": {"$cond": [{"$eq": [{"$toLower": {"$ifNull": ["$temperature", ""]}}, "cold"]}, 1, 0]},
+                **sales_metrics_temperature_add_fields(),
                 "rnr": {
                     "$cond": [
                         {
@@ -357,6 +312,7 @@ async def _sales_managers_from_aggregation(db) -> tuple:
             "hot": {"$sum": "$hot"},
             "warm": {"$sum": "$warm"},
             "cold": {"$sum": "$cold"},
+            "dormant": {"$sum": "$dormant"},
             "rnr": {"$sum": "$rnr"},
             "site_visits": {"$sum": "$site_visits"},
             "deals_closed": {"$sum": "$deals_closed"},
@@ -367,16 +323,6 @@ async def _sales_managers_from_aggregation(db) -> tuple:
     }
 
     main_rows = await db.leads.aggregate(metrics_stages + [group_stage]).to_list(None)
-
-    dormant_q = _dormant_leads_query({})
-    dormant_rows = await db.leads.aggregate(
-        [
-            {"$match": dormant_q},
-            {"$addFields": {"rep": _rep_name_expression()}},
-            {"$group": {"_id": "$rep", "dormant": {"$sum": 1}}},
-        ]
-    ).to_list(None)
-    dormant_by_rep = {r["_id"]: r["dormant"] for r in dormant_rows}
 
     managers: List[Dict[str, Any]] = []
     totals = {
@@ -394,7 +340,7 @@ async def _sales_managers_from_aggregation(db) -> tuple:
         name = r["_id"] or "Unassigned"
         if _is_invalid_rep_name(name):
             continue
-        dcount = int(dormant_by_rep.get(name, 0))
+        dcount = int(r.get("dormant", 0))
         total = int(r.get("total", 0))
         deals = int(r.get("deals_closed", 0))
         conv = round((deals / total) * 100) if total > 0 else 0

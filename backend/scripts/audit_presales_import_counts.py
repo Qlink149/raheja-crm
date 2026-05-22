@@ -79,7 +79,7 @@ async def audit(db, *, csv_path: Path, batch_id: str | None) -> None:
         }
     )
 
-    _, totals, _, _ = await _sales_managers_from_aggregation(db)
+    _, totals, _, _, _, _ = await _sales_managers_from_aggregation(db)
     dashboard_total = int(totals.get("total", 0))
 
     rep_rows = await db.leads.aggregate(
@@ -106,6 +106,10 @@ async def audit(db, *, csv_path: Path, batch_id: str | None) -> None:
     print()
     print(f"MongoDB leads (total): {total_leads:,}")
     print(f"Dashboard TOTAL card:  {dashboard_total:,}")
+    print(f"Dashboard HOT:         {int(totals.get('hot', 0)):,}")
+    print(f"Dashboard WARM:        {int(totals.get('warm', 0)):,}")
+    print(f"Dashboard COLD:        {int(totals.get('cold', 0)):,}")
+    print(f"Dashboard DORMANT:     {int(totals.get('dormant', 0)):,}")
     if batch_id and total_leads:
         print(f"Leads NOT in batch:    {max(0, total_leads - batch_count):,} (pre-existing, untouched)")
     print()

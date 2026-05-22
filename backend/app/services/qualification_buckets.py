@@ -137,13 +137,136 @@ def bucket_query(base: Dict[str, Any], bucket: str) -> Dict[str, Any]:
     """Return Mongo match for a dashboard KPI bucket."""
     key = (bucket or "").strip().lower()
     if key == "hot":
-        return {**base, "qualification_category": "Hot"}
+        return qc_or_legacy(base, "Hot", _legacy_hot_match())
     if key == "cold":
-        return {**base, "qualification_category": "Cold"}
+        return qc_or_legacy(base, "Cold", _legacy_cold_match())
     if key == "dormant":
-        return {**base, "qualification_category": "Dormant"}
+        return dormant_bucket_query(base)
     if key == "qualified":
-        return {**base, "qualification_category": "Qualified"}
+        return qc_or_legacy(base, "Qualified", _legacy_qualified_match())
     if key == "vip_pipeline":
-        return {**base, "qualification_category": "VIP Pipeline"}
+        return qc_or_legacy(base, "VIP Pipeline", _legacy_vip_match())
     raise ValueError(f"Unknown dashboard_bucket: {bucket}")
+
+
+def _agg_missing_qc() -> Dict[str, Any]:
+    return {
+        "$eq": [
+            {"$trim": {"input": {"$ifNull": ["$qualification_category", ""]}}},
+            "",
+        ]
+    }
+
+
+def _agg_legacy_qualified_positive() -> Dict[str, Any]:
+    return {
+        "$or": [
+            {"$eq": ["$status", "Qualified"]},
+            {"$in": [{"$ifNull": ["$ai_disposition", ""]}, list(_AI_INTERESTED)]},
+        ]
+    }
+
+
+def _agg_not_legacy_qualified_positive() -> Dict[str, Any]:
+    return {
+        "$and": [
+            {"$ne": ["$status", "Qualified"]},
+            {
+                "$not": {
+                    "$in": [{"$ifNull": ["$ai_disposition", ""]}, list(_AI_INTERESTED)]
+                }
+            },
+        ]
+    }
+
+
+def _agg_legacy_vip_positive() -> Dict[str, Any]:
+    return {
+        "$or": [
+            {"$eq": [{"$ifNull": ["$is_vip", False]}, True]},
+            {"$in": [{"$ifNull": ["$budget_category", ""]}, list(_VIP_BUDGET_TIERS)]},
+        ]
+    }
+
+
+def _agg_legacy_hot_match() -> Dict[str, Any]:
+    return {
+        "$and": [
+            {"$eq": ["$temperature", "Hot"]},
+            {"$ne": ["$status", "Lost"]},
+            _agg_not_legacy_qualified_positive(),
+            {"$ne": [{"$ifNull": ["$is_vip", False]}, True]},
+            {
+                "$not": {
+                    "$in": [{"$ifNull": ["$budget_category", ""]}, list(_VIP_BUDGET_TIERS)]
+                }
+            },
+        ]
+    }
+
+
+def _agg_legacy_cold_match() -> Dict[str, Any]:
+    return {
+        "$and": [
+            {"$eq": ["$temperature", "Cold"]},
+            {"$ne": ["$status", "Lost"]},
+            _agg_not_legacy_qualified_positive(),
+            {"$ne": [{"$ifNull": ["$is_vip", False]}, True]},
+            {
+                "$not": {
+                    "$in": [{"$ifNull": ["$budget_category", ""]}, list(_VIP_BUDGET_TIERS)]
+                }
+            },
+        ]
+    }
+
+
+def _agg_qc_or_legacy(category: str, legacy_match: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "$cond": [
+            {"$eq": ["$qualification_category", category]},
+            1,
+            {"$cond": [{"$and": [_agg_missing_qc(), legacy_match]}, 1, 0]},
+        ]
+    }
+
+
+def _agg_warm_match() -> Dict[str, Any]:
+    return {
+        "$cond": [
+            {
+                "$or": [
+                    {"$eq": ["$temperature", "Warm"]},
+                    {"$regexMatch": {"input": "$ls", "regex": r"(?i)^\s*warm\s*lead\s*$"}},
+                ]
+            },
+            1,
+            0,
+        ]
+    }
+
+
+def _agg_dormant_match() -> Dict[str, Any]:
+    return {
+        "$cond": [
+            {"$eq": ["$qualification_category", "Dormant"]},
+            1,
+            {
+                "$cond": [
+                    {"$and": [_agg_missing_qc(), {"$eq": ["$status", "Lost"]}]},
+                    1,
+                    0,
+                ]
+            },
+        ]
+    }
+
+
+def sales_metrics_temperature_add_fields() -> Dict[str, Any]:
+    """Per-lead 0/1 flags for sales dashboard aggregation ($addFields stage)."""
+    return {
+        "hot": _agg_qc_or_legacy("Hot", _agg_legacy_hot_match()),
+        "warm": _agg_warm_match(),
+        "cold": _agg_qc_or_legacy("Cold", _agg_legacy_cold_match()),
+        "dormant": _agg_dormant_match(),
+    }
