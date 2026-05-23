@@ -26,11 +26,9 @@ const CHART_COLORS = [
   "#06B6D4",
 ];
 
-export function mapLeadSourceLabel(raw) {
-  const s = String(raw || "");
-  if (s === "Futwork CSV Import") return "Platform Pipeline";
-  return s || "Other";
-}
+import { mapLeadSourceLabel } from "../brandLabels";
+
+export { mapLeadSourceLabel };
 
 export function mapLeadSources(stats) {
   if (!stats?.lead_source_stats) return [];

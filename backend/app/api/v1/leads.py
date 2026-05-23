@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, Query, HTTPException, UploadFile, File
-from typing import List, Optional
+from typing import Any, List, Optional
 import logging
 import re
 import uuid
@@ -15,8 +15,20 @@ from ...services.qualification_buckets import VALID_DASHBOARD_BUCKETS
 from ...services.campaign_service import CampaignService
 from ...services.assignment_service import AssignmentService, rep_lead_filter
 from ...models.lead import LeadDetail
+from ...core.time_utils import serialize_datetime_utc
+from ...services.structured_ai_service import NOT_WORTHY_MESSAGE
 
 logger = logging.getLogger(__name__)
+
+
+def _call_timestamp(doc: dict) -> Any:
+    return doc.get("started_at") or doc.get("created_at") or doc.get("call_date")
+
+
+def _serialize_call_timestamps(doc: dict) -> tuple:
+    ts = _call_timestamp(doc)
+    iso = serialize_datetime_utc(ts)
+    return iso, iso
 router = APIRouter()
 
 _FAILURE_INSERT_CHUNK = 1000
@@ -258,19 +270,24 @@ async def get_lead_calls(lead_id: str, db = Depends(get_db)):
                 ai_summary = str(se.get("call_summary"))
             elif d.get("extracted_data"):
                 ai_summary = (d.get("extracted_data") or {}).get("call_summary", "") or ""
+            created_iso, call_iso = _serialize_call_timestamps(d)
+            ai_worthy = d.get("ai_worthy") is not False
+            if not ai_worthy and ai_summary and ai_summary.strip() != NOT_WORTHY_MESSAGE:
+                ai_worthy = True
             calls.append({
                 "lead_id": lead_id,
                 "call_sid": d.get("id") or d.get("call_sid") or "",
-                "created_at": d.get("created_at") or d.get("started_at") or "",
-                "call_date": d.get("started_at", d.get("created_at", "")),
+                "created_at": created_iso,
+                "call_date": call_iso,
                 "status": d.get("status", ""),
                 "disposition": d.get("disposition", ""),
                 "duration": int(d.get("duration", 0) or 0),
                 "recording_url": d.get("recording_url", ""),
                 "transcript": d.get("transcript", ""),
                 "ai_call_summary": ai_summary,
-                "ai_worthy": d.get("ai_worthy") is not False,
+                "ai_worthy": ai_worthy,
                 "campaign": d.get("campaign", ""),
+                "structured_extraction": se if isinstance(se, dict) else {},
             })
 
     # 2. Also check leads collection for embedded call data (from webhook upserts to leads doc)
@@ -290,19 +307,21 @@ async def get_lead_calls(lead_id: str, db = Depends(get_db)):
         for d in lead_call_docs:
             if not (d.get("call_status") or d.get("recording_url") or d.get("transcript")):
                 continue
+            created_iso, call_iso = _serialize_call_timestamps(d)
             calls.append({
                 "lead_id": d.get("id", lead_id),
                 "call_sid": "",
-                "created_at": d.get("created_at") or d.get("call_date") or "",
-                "call_date": d.get("call_date", d.get("created_at", "")),
+                "created_at": created_iso,
+                "call_date": call_iso,
                 "status": d.get("call_status", ""),
                 "disposition": d.get("disposition", ""),
-                "duration": int(d.get("call_duration", 0) or 0),
+                "duration": int(d.get("call_duration", 0) or d.get("last_call_duration", 0) or 0),
                 "recording_url": d.get("recording_url", ""),
                 "transcript": d.get("transcript", ""),
                 "ai_call_summary": d.get("lastCallSummary", ""),
                 "ai_worthy": True,
                 "campaign": d.get("campaign_name", ""),
+                "structured_extraction": {},
             })
 
     return {"calls": calls}
@@ -431,7 +450,7 @@ async def upload_leads(
         if not (settings.FUTWORK_API_KEY or "").strip() or not (settings.FUTWORK_CAMPAIGN_ID or "").strip():
             raise HTTPException(
                 status_code=503,
-                detail="Futwork is not configured on the server (missing FUTWORK_API_KEY / FUTWORK_CAMPAIGN_ID).",
+                detail="Calling Engine is not configured on the server (missing API key / campaign ID).",
             )
         upload_campaign_id = None
         try:

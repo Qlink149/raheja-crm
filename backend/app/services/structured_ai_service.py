@@ -150,6 +150,11 @@ def _call_context_for_insight(call_doc: Dict[str, Any]) -> Dict[str, Any]:
             "key_signals",
             "preferred_location",
             "unit_configuration",
+            "carpet_area",
+            "possession_requirement",
+            "purchase_purpose",
+            "current_residence_type",
+            "project_interest",
             "disposition",
         ):
             val = se.get(key)
@@ -180,9 +185,52 @@ def _build_insight_user_content(
     return f"Lead Data:\n{json.dumps(lead_clean, default=str)}\n\nTask: {prompt}"
 
 
-def worthy_call_gate(status_raw: str, transcript: str) -> Tuple[bool, List[str]]:
+_USER_TURN_RE = re.compile(
+    r"(?im)^\s*(?:User|Customer|ग्राहक|यूज़र|उपयोगकर्ता)\s*:"
+)
+_AGENT_LABEL_PREFIXES = frozenset(
+    {
+        "futwork agent",
+        "futworkagent",
+        "ai agent",
+        "aiagent",
+        "assistant",
+        "agent",
+        "system",
+        "bot",
+        "प्रिया",
+        "rustomjee",
+    }
+)
+
+
+def _has_customer_turn(transcript: str) -> bool:
+    """True if transcript has a customer/user speaker line (incl. non-English Futwork labels)."""
+    t = (transcript or "").strip()
+    if _USER_TURN_RE.search(t):
+        return True
+    for line in t.splitlines():
+        m = re.match(r"^\s*([^:]+)\s*:\s*\S", line)
+        if not m:
+            continue
+        label = (m.group(1) or "").strip().lower()
+        norm = label.replace(" ", "")
+        if any(label == a or norm == a.replace(" ", "") for a in _AGENT_LABEL_PREFIXES):
+            continue
+        return True
+    return False
+
+
+def worthy_call_gate(
+    status_raw: str,
+    transcript: str,
+    *,
+    duration_seconds: int = 0,
+    disposition: str = "",
+) -> Tuple[bool, List[str]]:
     """
-    Strict gate: skip OpenAI if transcript < 50 chars, no User: turn, or terminal miss statuses.
+    Skip OpenAI when transcript is too short, no customer dialogue, or terminal miss statuses.
+    Long interested calls with substantial transcripts may pass without strict User: prefix.
     """
     reasons: List[str] = []
     s = (status_raw or "").strip().lower().replace("_", "-")
@@ -191,12 +239,30 @@ def worthy_call_gate(status_raw: str, transcript: str) -> Tuple[bool, List[str]]
     t = (transcript or "").strip()
     if len(t) < 50:
         reasons.append("transcript_lt_50")
-    if not re.search(
-        r"(?im)^\s*(?:User|Customer|ग्राहक|यूज़र|उपयोगकर्ता)\s*:",
-        t,
-    ):
-        reasons.append("no_user_turn")
+    if not _has_customer_turn(t):
+        d = (disposition or "").strip().lower()
+        interested = d in (
+            "interested",
+            "semi-interested",
+            "semi interested",
+            "hot lead",
+            "mildly interested",
+        )
+        if not (int(duration_seconds or 0) >= 60 and interested and len(t) >= 120):
+            reasons.append("no_user_turn")
     return (len(reasons) == 0, reasons)
+
+
+def _stored_call_summary(doc: Dict[str, Any]) -> str:
+    se = doc.get("structured_extraction") or {}
+    if isinstance(se, dict):
+        return str(se.get("call_summary") or "").strip()
+    return ""
+
+
+def _is_usable_call_summary(text: str) -> bool:
+    s = (text or "").strip()
+    return bool(s) and s != NOT_WORTHY_MESSAGE
 
 
 def not_worthy_call_history_patch(now: Optional[datetime] = None) -> Dict[str, Any]:
@@ -342,6 +408,39 @@ def _budget_band_mid_cr(bc: str) -> str:
     return m.get((bc or "").strip(), "")
 
 
+def _normalize_stated_budget_cr(raw: Any) -> str:
+    """Normalize stated budget to a crore number string for lead.budget (e.g. 12)."""
+    if raw is None:
+        return ""
+    s = str(raw).strip()
+    if not s or s.lower() in ("0", "na", "n/a", "not captured", "profiling in progress"):
+        return ""
+    nums = [float(x) for x in re.findall(r"[-+]?\d*\.?\d+", s) if x not in ("", ".", "+", "-")]
+    if not nums:
+        return ""
+    n = nums[0]
+    sl = s.lower()
+    if "lakh" in sl or "lac" in sl:
+        n = n / 100.0
+    if n <= 0:
+        return ""
+    if n == int(n):
+        return str(int(n))
+    return str(round(n, 2))
+
+
+_EXTRACTION_SKIP_VALUES = frozenset(
+    {"", "na", "n/a", "not captured", "unknown", "profiling in progress", "other"}
+)
+
+
+def _extraction_text_for_patch(raw: Any) -> str:
+    s = (str(raw) if raw is not None else "").strip()
+    if not s or s.lower() in _EXTRACTION_SKIP_VALUES:
+        return ""
+    return s
+
+
 class StructuredAIService:
     def __init__(self, db: AsyncIOMotorDatabase):
         self.db = db
@@ -360,6 +459,8 @@ class StructuredAIService:
             "Analyze the call transcript and output STRICT JSON only with exactly these keys:\n"
             "- budget_match (boolean): true if stated budget aligns with a typical Rustomjee purchase (crore-scale).\n"
             "- budget_category (string): one of: <1 Cr | 1-2 Cr | 2-5 Cr | 5 Cr+ | Other | Profiling in Progress\n"
+            "- stated_budget_cr (string): exact budget in crore if the customer stated a number "
+            '(e.g. "12" for twelve crore); empty string if not stated\n'
             "- area_match (boolean): true if preferred area matches Rustomjee focus (Mumbai/Thane/nearby).\n"
             "- location_category (string): one of: Thane | Bandra/BKC | South Mumbai | Suburbs | Other | Profiling in Progress\n"
             "- timeline_match (boolean): true if realistic purchase timeline within ~12 months or clear near-term intent.\n"
@@ -367,12 +468,24 @@ class StructuredAIService:
             "- disposition (string): exactly one of: Hot Lead | Semi-Interested | Mildly interested | "
             "Not Interested | Voicemail | Wrong Number | Already Bought\n"
             "- call_summary (string): 3-5 concise actionable sentences.\n"
-            "- preferred_location (string): neighborhood or area the customer stated, else empty string.\n"
-            "- unit_configuration (string): BHK / unit type (e.g. 2 BHK) if stated, else empty string.\n"
+            "- preferred_location (string): specific neighborhood or locality stated (e.g. Bandra West); "
+            "empty if not stated. Distinct from location_category bucket.\n"
+            "- unit_configuration (string): BHK / unit type (e.g. 2 BHK, 4 BHK) if stated, else empty string.\n"
+            "- carpet_area (string): carpet area if stated (e.g. 1200 sq ft, 1500-1800 sq ft); else empty.\n"
+            "- possession_requirement (string): possession timeline if stated "
+            '(e.g. Ready possession, Dec 2026, Under construction OK); else empty.\n'
+            "- purchase_purpose (string): why they are buying / end-use "
+            '(e.g. self-use upgrade, investment, family expansion); else empty. '
+            "Distinct from intent_category.\n"
+            "- current_residence_type (string): current housing if stated "
+            '(e.g. Rented, Owned, Living with family); else empty.\n'
+            "- project_interest (string): Rustomjee or other project name if stated; else empty.\n"
             "Also include schema_version: 2, lead_name, phone (masked like ******1234), system_tag_correct (boolean), "
             "key_signals (array of short strings).\n"
-            "If information is missing, use false and Profiling in Progress / Other as appropriate. "
-            "Never invent a conversation; if transcript is unclear, lower confidence via key_signals."
+            "Extract free-text fields ONLY from what is explicitly stated in THIS call transcript; "
+            "use empty string when not mentioned — do not guess or carry over assumptions.\n"
+            "For bucket fields (budget_category, location_category, intent_category), use Profiling in Progress / Other "
+            "when unclear. Never invent a conversation; if transcript is unclear, lower confidence via key_signals."
         )
         user_obj = {
             "customer_name": customer_name or "Unknown",
@@ -411,7 +524,7 @@ class StructuredAIService:
             model="gpt-4o",
             messages=messages,
             temperature=0.2,
-            max_tokens=900,
+            max_tokens=1050,
             response_format={"type": "json_object"},
         )
         raw = (resp.choices[0].message.content or "").strip()
@@ -460,8 +573,8 @@ class StructuredAIService:
         if dispo:
             patch["disposition"] = dispo
 
-        pl = (extraction.preferred_location or "").strip()
-        uc = (extraction.unit_configuration or "").strip()
+        pl = _extraction_text_for_patch(extraction.preferred_location)
+        uc = _extraction_text_for_patch(extraction.unit_configuration)
         if pl:
             patch["location"] = pl
             patch["current_residence_location"] = pl
@@ -474,9 +587,29 @@ class StructuredAIService:
             patch["configuration"] = uc
             patch["bhk"] = uc
 
-        mid_cr = _budget_band_mid_cr(bc)
-        if mid_cr:
-            patch["budget"] = mid_cr
+        carpet = _extraction_text_for_patch(extraction.carpet_area)
+        if carpet:
+            patch["carpet_area"] = carpet
+        possession = _extraction_text_for_patch(extraction.possession_requirement)
+        if possession:
+            patch["possession_requirement"] = possession
+        purpose = _extraction_text_for_patch(extraction.purchase_purpose)
+        if purpose:
+            patch["reason_for_purchase"] = purpose
+        residence_type = _extraction_text_for_patch(extraction.current_residence_type)
+        if residence_type:
+            patch["current_residence_type"] = residence_type
+        project = _extraction_text_for_patch(extraction.project_interest)
+        if project:
+            patch["project"] = project
+
+        stated_cr = _normalize_stated_budget_cr(extraction.stated_budget_cr)
+        if stated_cr:
+            patch["budget"] = stated_cr
+        else:
+            mid_cr = _budget_band_mid_cr(bc)
+            if mid_cr:
+                patch["budget"] = mid_cr
 
         return patch
 
@@ -530,8 +663,15 @@ class StructuredAIService:
         for d in docs:
             tr = (d.get("transcript") or "").strip()
             st = str(d.get("futwork_status") or d.get("status") or "")
-            ok, _ = worthy_call_gate(st, tr)
+            ok, _ = worthy_call_gate(
+                st,
+                tr,
+                duration_seconds=int(d.get("duration") or 0),
+                disposition=str(d.get("disposition") or ""),
+            )
             if ok:
+                return d
+            if _is_usable_call_summary(_stored_call_summary(d)):
                 return d
         return None
 
@@ -668,12 +808,23 @@ class StructuredAIService:
         cid = doc.get("id") or doc.get("call_sid")
         transcript = (doc.get("transcript") or "").strip()
         status_raw = str(doc.get("futwork_status") or doc.get("status") or "")
-        worthy, _ = worthy_call_gate(status_raw, transcript)
+        disposition = str(doc.get("disposition") or "")
+        duration_seconds = int(doc.get("duration") or 0)
+        stored_summary = _stored_call_summary(doc)
+
+        if not refresh and _is_usable_call_summary(stored_summary):
+            return stored_summary
+
+        worthy, _ = worthy_call_gate(
+            status_raw,
+            transcript,
+            duration_seconds=duration_seconds,
+            disposition=disposition,
+        )
 
         if not worthy:
-            se = doc.get("structured_extraction") or {}
-            if doc.get("ai_worthy") is False and se.get("call_summary") == NOT_WORTHY_MESSAGE:
-                return NOT_WORTHY_MESSAGE
+            if _is_usable_call_summary(stored_summary):
+                return stored_summary
             if cid:
                 await self.db.call_history.update_one(
                     {"id": cid},
@@ -681,15 +832,8 @@ class StructuredAIService:
                 )
             return NOT_WORTHY_MESSAGE
 
-        if not refresh:
-            se = doc.get("structured_extraction") or {}
-            if (
-                doc.get("ai_worthy") is True
-                and isinstance(se, dict)
-                and int(se.get("schema_version") or 0) == 2
-                and (se.get("call_summary") or "").strip()
-            ):
-                return str(se.get("call_summary")).strip()
+        if not refresh and _is_usable_call_summary(stored_summary):
+            return stored_summary
 
         unified = await self.extract_unified(
             customer_name=customer_name,

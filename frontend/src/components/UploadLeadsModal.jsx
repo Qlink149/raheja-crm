@@ -312,7 +312,7 @@ const UploadLeadsModal = ({
                     <span className="text-red-400">Lead ID</span> is required and must be unique.
                     Same mobile with different Lead IDs creates separate leads.
                   </li>
-                  <li>Name and Mobile are optional; Mobile is required only for Futwork dial-out.</li>
+                  <li>Name and Mobile are optional; Mobile is required only for Calling Engine dial-out.</li>
                 </ul>
               </div>
             </div>

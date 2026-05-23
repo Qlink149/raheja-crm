@@ -124,7 +124,7 @@ const LeadUploadDetailsModal = ({ open, onOpenChange, uploadId, onUpdated }) => 
           <div className="space-y-4 text-sm">
             {detail.source === "bulk_push" ? (
               <p className="text-[#A3A3A3] text-xs rounded border border-violet-500/20 bg-violet-500/10 px-3 py-2">
-                This batch was created from a DB bulk Futwork push (no CSV file).
+                This batch was created from a DB bulk Calling Engine push (no CSV file).
               </p>
             ) : null}
             <div className="grid grid-cols-2 gap-2 text-[#A3A3A3]">

@@ -33,6 +33,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../components/ui/select";
+import { UI_COPY } from "../lib/brandLabels";
 
 function PlatformSyncBadge({ status }) {
   const s = (status || "pending").toLowerCase();
@@ -587,7 +588,7 @@ const VirtualCustomerPage = () => {
                 : "text-[#A3A3A3] hover:text-white"
             }`}
           >
-            Futwork Called
+            {UI_COPY.engineCalled}
           </button>
           <button
             type="button"

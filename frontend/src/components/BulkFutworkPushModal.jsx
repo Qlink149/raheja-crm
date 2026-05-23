@@ -11,6 +11,7 @@ import {
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { campaignsAPI } from "../lib/api";
+import { UI_COPY } from "../lib/brandLabels";
 
 const PRESETS = [100, 200, 1000, 3000];
 const MAX_LIMIT = 5000;
@@ -78,7 +79,7 @@ const BulkFutworkPushModal = ({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="bg-[#1A1A1A] border-white/10 text-white max-w-md">
         <DialogHeader>
-          <DialogTitle className="text-white">Push DB leads to Futwork</DialogTitle>
+          <DialogTitle className="text-white">{UI_COPY.pushDbToCallingEngine}</DialogTitle>
         </DialogHeader>
 
         <div className="space-y-4 text-sm">
@@ -155,7 +156,7 @@ const BulkFutworkPushModal = ({
           </div>
 
           {!futworkEnabled ? (
-            <p className="text-red-400 text-xs">Futwork is not configured on the server.</p>
+            <p className="text-red-400 text-xs">{UI_COPY.callingEngineNotConfigured}</p>
           ) : null}
         </div>
 

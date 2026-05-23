@@ -156,14 +156,14 @@ async def start_bulk_futwork_push(
         if code == "futwork_not_configured":
             raise HTTPException(
                 status_code=503,
-                detail="Futwork is not configured on the server",
+                detail="Calling Engine is not configured on the server",
             )
         if code == "batch_name_required":
             raise HTTPException(status_code=400, detail="Batch name is required")
         raise HTTPException(status_code=400, detail=code)
     except Exception:
         logger.exception("start_bulk_futwork_push: failed")
-        raise HTTPException(status_code=500, detail="Failed to start bulk Futwork push")
+        raise HTTPException(status_code=500, detail="Failed to start bulk Calling Engine push")
 
 
 @router.get("/current/upload-history/{upload_id}/unprocessed.csv")

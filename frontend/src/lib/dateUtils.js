@@ -28,3 +28,15 @@ export function formatDateTimeIST(dateStr, options = {}) {
     ...options,
   });
 }
+
+/** Short date for context timeline (IST). */
+export function formatDateOnlyIST(dateStr) {
+  const d = parseUtc(dateStr);
+  if (!d) return "—";
+  return d.toLocaleDateString("en-GB", {
+    timeZone: "Asia/Kolkata",
+    day: "2-digit",
+    month: "2-digit",
+    year: "2-digit",
+  });
+}

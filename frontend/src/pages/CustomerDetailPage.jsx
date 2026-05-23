@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
@@ -25,7 +25,7 @@ import {
   Bot,
   History,
   Users,
-  FileText,
+  // FileText, — CONTEXT_UPDATES_HIDDEN
   RefreshCw,
   ChevronDown,
   ChevronUp,
@@ -37,6 +37,18 @@ import EmptyState from "../components/feedback/EmptyState";
 import { CustomerDetailSkeleton } from "../components/feedback/Skeletons";
 import { api } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
+import { formatDateTimeIST } from "../lib/dateUtils";
+import { formatDuration } from "../lib/formatDuration";
+// CONTEXT_UPDATES_HIDDEN — re-enable when context timeline is fixed
+// import { buildContextUpdatesFromLeadAndCalls } from "../lib/contextUpdates";
+import { mapLeadSourceLabel } from "../lib/brandLabels";
+import {
+  canExpandCallSummary,
+  callSummaryDisabledReason,
+  formatLeadBudgetDisplay,
+  isUsableCallSummary,
+} from "../lib/leadBudgetDisplay";
+import CallRecordingPlayer from "../components/CallRecordingPlayer";
 import {
   Select,
   SelectContent,
@@ -53,7 +65,8 @@ const CustomerDetailPage = () => {
   const { isAdmin } = useAuth();
   const [lead, setLead] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [earliestCallMs, setEarliestCallMs] = useState(null);
+  const [leadCalls, setLeadCalls] = useState([]);
+  const [callsLoading, setCallsLoading] = useState(true);
   const [salesReps, setSalesReps] = useState([]);
   const [qualifying, setQualifying] = useState(false);
 
@@ -69,21 +82,16 @@ const CustomerDetailPage = () => {
   useEffect(() => {
     if (!id) return;
     let mounted = true;
+    setCallsLoading(true);
     (async () => {
       try {
         const res = await api.get(`/leads/${id}/calls`);
         if (!mounted) return;
-        const list = res.data?.calls || [];
-        let minTs = null;
-        for (const c of list) {
-          const raw = c.created_at || c.call_date;
-          if (!raw) continue;
-          const t = new Date(raw).getTime();
-          if (!Number.isNaN(t) && (minTs === null || t < minTs)) minTs = t;
-        }
-        setEarliestCallMs(minTs);
+        setLeadCalls(res.data?.calls || []);
       } catch {
-        if (mounted) setEarliestCallMs(null);
+        if (mounted) setLeadCalls([]);
+      } finally {
+        if (mounted) setCallsLoading(false);
       }
     })();
     return () => {
@@ -183,108 +191,13 @@ const CustomerDetailPage = () => {
     });
   };
 
-  const formatTimelineDate = (ms) => {
-    if (ms == null || Number.isNaN(ms)) return "—";
-    return new Date(ms).toLocaleDateString("en-GB", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "2-digit",
-    });
-  };
-
-  // Generate context updates based on lead data; Initial contact uses earliest call_history created_at
-  const generateContextUpdates = (leadRow, earliestMs) => {
-    const updates = [];
-    const baseDate = new Date();
-    
-    // Add updates based on available lead data - only if value exists and is not empty
-    if (leadRow?.configuration && leadRow.configuration !== '' && leadRow.configuration !== 'N/A') {
-      updates.push({
-        date: new Date(baseDate.getTime() - 30 * 24 * 60 * 60 * 1000).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit' }),
-        icon: 'phone',
-        context: `User interested in ${leadRow.configuration} configuration`,
-        type: 'call'
-      });
-    }
-    
-    if (leadRow?.current_residence_type && leadRow.current_residence_type !== '' && leadRow.current_residence_type !== 'N/A') {
-      updates.push({
-        date: new Date(baseDate.getTime() - 25 * 24 * 60 * 60 * 1000).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit' }),
-        icon: 'whatsapp',
-        context: `Currently residing in ${leadRow.current_residence_type}`,
-        type: 'whatsapp'
-      });
-    }
-    
-    if (leadRow?.reason_for_purchase && leadRow.reason_for_purchase !== '' && leadRow.reason_for_purchase !== 'N/A') {
-      updates.push({
-        date: new Date(baseDate.getTime() - 20 * 24 * 60 * 60 * 1000).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit' }),
-        icon: 'human',
-        context: `Purchase intent: ${leadRow.reason_for_purchase}`,
-        type: 'human'
-      });
-    }
-    
-    if (leadRow?.possession_requirement && leadRow.possession_requirement !== '' && leadRow.possession_requirement !== 'N/A') {
-      updates.push({
-        date: new Date(baseDate.getTime() - 15 * 24 * 60 * 60 * 1000).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit' }),
-        icon: 'phone',
-        context: `Possession preference: ${leadRow.possession_requirement}`,
-        type: 'call'
-      });
-    }
-    
-    if (leadRow?.budget && leadRow.budget !== '' && leadRow.budget !== '0' && leadRow.budget !== 'N/A') {
-      updates.push({
-        date: new Date(baseDate.getTime() - 10 * 24 * 60 * 60 * 1000).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit' }),
-        icon: 'whatsapp',
-        context: `Budget confirmed: ${leadRow.budget} Cr`,
-        type: 'whatsapp'
-      });
-    }
-    
-    if (leadRow?.project && leadRow.project !== '' && leadRow.project !== 'N/A') {
-      updates.push({
-        date: new Date(baseDate.getTime() - 5 * 24 * 60 * 60 * 1000).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit' }),
-        icon: 'human',
-        context: `Showed interest in ${leadRow.project}`,
-        type: 'human'
-      });
-    }
-    
-    if (leadRow?.next_action_date && leadRow.next_action_date !== '' && leadRow.next_action_date !== 'N/A') {
-      updates.push({
-        date: new Date(baseDate.getTime() - 2 * 24 * 60 * 60 * 1000).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit' }),
-        icon: 'human',
-        context: `Site visit scheduled for ${leadRow.next_action_date}`,
-        type: 'human'
-      });
-    }
-
-    if (earliestMs != null && !Number.isNaN(earliestMs)) {
-      updates.unshift({
-        date: formatTimelineDate(earliestMs),
-        icon: "phone",
-        context: "Initial contact made",
-        type: "call",
-      });
-    }
-
-    if (updates.length > 0) return updates;
-    return [
-      {
-        date: "—",
-        icon: "phone",
-        context: "Initial contact made",
-        type: "call",
-      },
-    ];
-  };
-
-  const contextUpdates = useMemo(
-    () => (lead ? generateContextUpdates(lead, earliestCallMs) : []),
-    [lead, earliestCallMs]
-  );
+  /* CONTEXT_UPDATES_HIDDEN — re-enable when context timeline is fixed
+  const contextUpdates = useMemo(() => {
+    if (!lead) return [];
+    const stored = lead.context_updates;
+    if (Array.isArray(stored) && stored.length > 0) return stored;
+    return buildContextUpdatesFromLeadAndCalls(lead, leadCalls);
+  }, [lead, leadCalls]);
 
   const getContextIcon = (type) => {
     switch (type) {
@@ -311,6 +224,7 @@ const CustomerDetailPage = () => {
         return 'bg-white/10 border-white/20';
     }
   };
+  */
 
   if (loading) {
     return (
@@ -370,7 +284,7 @@ const CustomerDetailPage = () => {
               <Building className="text-[#C5A059] mr-4" size={24} />
               <div>
                 <p className="text-[#C5A059] font-serif text-lg">{lead.project || "No Project Assigned"}</p>
-                <p className="text-[#52525B] text-xs">{lead.source || "Direct"} · {lead.status || "Inquiry"}</p>
+                <p className="text-[#52525B] text-xs">{mapLeadSourceLabel(lead.source)} · {lead.status || "Inquiry"}</p>
               </div>
             </div>
           </motion.div>
@@ -601,23 +515,7 @@ const CustomerDetailPage = () => {
                   <DataDNAItem
                     icon={Wallet}
                     label="Budget"
-                    value={(() => {
-                      const b = lead.budget;
-                      if (
-                        b != null &&
-                        b !== "" &&
-                        b !== "0" &&
-                        b !== 0 &&
-                        b !== "Profiling in Progress"
-                      ) {
-                        const s = String(b).trim();
-                        if (/cr/i.test(s)) return s;
-                        return `${s} Cr`;
-                      }
-                      const bc = (lead.budget_category || "").trim();
-                      if (bc && bc !== "Other" && bc !== "Profiling in Progress") return bc;
-                      return "";
-                    })()}
+                    value={formatLeadBudgetDisplay(lead)}
                   />
                   <DataDNAItem
                     icon={Ruler}
@@ -637,7 +535,14 @@ const CustomerDetailPage = () => {
                   <DataDNAItem
                     icon={MapPin}
                     label="Location Pref"
-                    value={lead.location_category}
+                    value={
+                      lead.location ||
+                      (lead.location_category &&
+                      lead.location_category !== "Other" &&
+                      lead.location_category !== "Profiling in Progress"
+                        ? lead.location_category
+                        : "")
+                    }
                   />
                   <DataDNAItem
                     icon={Target}
@@ -648,34 +553,33 @@ const CustomerDetailPage = () => {
               </div>
             </motion.div>
 
-            {/* Interaction Timeline */}
+            {/* Interaction Timeline (Context Updates hidden — search CONTEXT_UPDATES_HIDDEN) */}
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.2 }}
-              className="lg:col-span-3 glass-card rounded-xl p-6 min-w-0 lg:max-h-[calc(100vh-180px)] flex flex-col"
+              className="lg:col-span-7 glass-card rounded-xl p-6 min-w-0 flex flex-col overflow-hidden"
             >
               <h2 className="kicker mb-6 flex-shrink-0">Interaction Timeline</h2>
-              <div className="flex-1 min-h-0">
-                <CallsTimeline leadId={id} />
+              <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
+                <CallsTimeline calls={leadCalls} loading={callsLoading} />
               </div>
             </motion.div>
 
-            {/* Context Update Timeline */}
+            {/* CONTEXT_UPDATES_HIDDEN — re-enable when context timeline is fixed
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.3 }}
-              className="lg:col-span-4 glass-card rounded-xl p-6 min-w-0 lg:max-h-[calc(100vh-180px)] flex flex-col"
+              className="glass-card rounded-xl p-6 min-w-0 flex flex-col"
             >
               <div className="flex items-center gap-2 mb-6 flex-shrink-0">
                 <History className="w-5 h-5 text-[#C5A059]" />
                 <h2 className="kicker">Context Updates</h2>
               </div>
 
-              <ScrollArea className="flex-1 min-h-0 max-h-80 lg:max-h-none">
+              <ScrollArea className="h-80 lg:h-96 w-full pr-2">
                 <div className="relative pr-2">
-                  {/* Timeline line */}
                   <div className="absolute left-[18px] top-0 bottom-0 w-px bg-white/10" />
 
                   <div className="space-y-4">
@@ -687,12 +591,10 @@ const CustomerDetailPage = () => {
                         transition={{ delay: index * 0.1 }}
                         className="relative flex gap-4 pl-1 min-w-0"
                       >
-                        {/* Icon */}
                         <div className={`relative z-10 flex-shrink-0 w-9 h-9 rounded-full border flex items-center justify-center ${getContextIconBg(update.type)}`}>
                           {getContextIcon(update.type)}
                         </div>
 
-                        {/* Content */}
                         <div className="flex-1 pb-4 min-w-0">
                           <div className="flex items-center gap-2 mb-1 flex-wrap">
                             <span className="text-xs font-mono text-[#C5A059] tabular-nums">{update.date}</span>
@@ -710,6 +612,7 @@ const CustomerDetailPage = () => {
                 </div>
               </ScrollArea>
             </motion.div>
+            */}
           </div>
         </motion.div>
     </motion.div>
@@ -877,27 +780,7 @@ const MarkdownLite = ({ text }) => {
 };
 
 // Calls timeline — replaces the previous Tabs (WhatsApp + Calls) UI.
-const CallsTimeline = ({ leadId }) => {
-  const [calls, setCalls] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      try {
-        const res = await api.get(`/leads/${leadId}/calls`);
-        if (mounted) setCalls(res.data?.calls || []);
-      } catch (e) {
-        console.error(e);
-      } finally {
-        if (mounted) setLoading(false);
-      }
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, [leadId]);
-
+const CallsTimeline = ({ calls, loading }) => {
   if (loading) {
     return (
       <div className="flex items-center gap-2 text-[#A3A3A3] text-sm">
@@ -907,13 +790,13 @@ const CallsTimeline = ({ leadId }) => {
     );
   }
 
-  if (calls.length === 0) {
+  if (!calls?.length) {
     return <p className="text-sm text-[#A3A3A3]">No call interactions yet for this customer.</p>;
   }
 
   return (
-    <ScrollArea className="h-full max-h-[60vh] lg:max-h-none pr-2">
-      <div className="space-y-4 pr-2">
+    <ScrollArea className="h-[min(60vh,640px)] lg:h-[min(75vh,800px)] w-full pr-2">
+      <div className="space-y-4 pr-3 pb-2">
         {calls.map((call) => (
           <CallCard key={call.call_sid || `${call.lead_id}-${call.call_date}`} call={call} />
         ))}
@@ -922,17 +805,10 @@ const CallsTimeline = ({ leadId }) => {
   );
 };
 
-const formatCallDate = (raw) => {
+const formatCallDate = (call) => {
+  const raw = call?.created_at || call?.call_date;
   if (!raw) return "Unknown date";
-  const d = new Date(raw);
-  if (isNaN(d.getTime())) return raw;
-  return d.toLocaleString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return formatDateTimeIST(raw);
 };
 
 const dispositionStyle = (disposition, status) => {
@@ -949,23 +825,32 @@ const dispositionStyle = (disposition, status) => {
 };
 
 const CallCard = ({ call }) => {
-  const aiWorthy = call.ai_worthy !== false;
+  const canExpand = canExpandCallSummary(call);
+  const cachedSummary = isUsableCallSummary(call.ai_call_summary)
+    ? call.ai_call_summary.trim()
+    : "";
   const [expanded, setExpanded] = useState(false);
-  const [summary, setSummary] = useState(
-    call.ai_call_summary || (aiWorthy ? "" : "No meaningful conversation")
-  );
+  const [summary, setSummary] = useState(cachedSummary);
   const [loading, setLoading] = useState(false);
 
   const label = call.disposition || call.status || "Unknown";
+  const disabledReason = callSummaryDisabledReason(call);
 
   const toggle = async () => {
-    if (!aiWorthy) return;
+    if (!canExpand) return;
     const next = !expanded;
     setExpanded(next);
-    if (next && !summary && !loading) {
+    if (!next) return;
+
+    if (cachedSummary) {
+      setSummary(cachedSummary);
+      return;
+    }
+
+    if (!summary && !loading) {
       setLoading(true);
       try {
-        const params = {};
+        const params = { refresh: true };
         if (call.call_sid) params.call_sid = call.call_sid;
         const res = await api.post(`/leads/${call.lead_id}/call-summary`, null, { params });
         setSummary(res.data?.summary || "Summary unavailable.");
@@ -978,39 +863,35 @@ const CallCard = ({ call }) => {
   };
 
   return (
-    <div className="bg-white/5 rounded-lg border border-white/5 overflow-hidden">
-      <div className="p-4">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2 text-xs text-[#A3A3A3]">
-            <PhoneCall className="w-3.5 h-3.5 text-[#C5A059]" />
-            <span>{formatCallDate(call.call_date)}</span>
+    <div className="bg-white/5 rounded-lg border border-white/5 min-w-0">
+      <div className="p-4 min-w-0">
+        <div className="flex items-center justify-between gap-2 mb-3 min-w-0">
+          <div className="flex items-center gap-2 text-xs text-[#A3A3A3] min-w-0">
+            <PhoneCall className="w-3.5 h-3.5 text-[#C5A059] flex-shrink-0" />
+            <span className="tabular-nums truncate">{formatCallDate(call)}</span>
+            {call.duration > 0 ? (
+              <span className="text-[#C5A059] tabular-nums flex-shrink-0">{formatDuration(call.duration)}</span>
+            ) : null}
           </div>
-          <span className={`px-2 py-0.5 rounded text-[11px] border ${dispositionStyle(call.disposition, call.status)}`}>
+          <span className={`px-2 py-0.5 rounded text-[11px] border flex-shrink-0 ${dispositionStyle(call.disposition, call.status)}`}>
             {label}
           </span>
         </div>
 
-        {/* Audio player */}
-        {call.recording_url ? (
-          <audio
-            controls
-            src={call.recording_url}
-            className="w-full audio-gold"
-            data-testid={`call-audio-${call.lead_id}`}
-          />
-        ) : (
-          <p className="text-xs text-[#525252] italic">Recording unavailable.</p>
-        )}
+        <CallRecordingPlayer
+          src={call.recording_url}
+          testId={`call-audio-${call.lead_id}`}
+        />
 
         {/* AI Summary toggle */}
         <button
           type="button"
           onClick={toggle}
-          disabled={!aiWorthy}
-          title={!aiWorthy ? "No meaningful conversation — AI summary disabled" : undefined}
+          disabled={!canExpand}
+          title={disabledReason}
           data-testid={`toggle-call-summary-${call.call_sid || call.lead_id}`}
           className={`mt-3 flex items-center gap-1.5 text-[11px] uppercase tracking-wider transition-colors ${
-            aiWorthy
+            canExpand
               ? "text-[#C5A059] hover:text-[#E5C585]"
               : "text-[#525252] cursor-not-allowed opacity-60"
           }`}

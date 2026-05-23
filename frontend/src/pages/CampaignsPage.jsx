@@ -20,6 +20,7 @@ import {
 import UploadLeadsModal from "../components/UploadLeadsModal";
 import LeadUploadDetailsModal from "../components/LeadUploadDetailsModal";
 import BulkFutworkPushModal from "../components/BulkFutworkPushModal";
+import { UI_COPY } from "../lib/brandLabels";
 import EmptyState from "../components/feedback/EmptyState";
 import { CampaignSkeleton } from "../components/feedback/Skeletons";
 import { api, campaignsAPI, isBackendConfigured } from "../lib/api";
@@ -522,8 +523,7 @@ const CampaignsPage = () => {
                 {eligibleFutworkCount != null ? (
                   <p className="text-sm text-[#A3A3A3] rounded-lg border border-white/5 bg-white/[0.02] px-4 py-3">
                     <span className="text-white font-medium tabular-nums">{eligibleFutworkCount}</span>{" "}
-                    leads in the database can still be pushed to Futwork (pending or failed sync,
-                    valid phone + Lead ID).
+                    {UI_COPY.eligiblePushHint}
                   </p>
                 ) : null}
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -565,7 +565,7 @@ const CampaignsPage = () => {
                       }
                     >
                       <PhoneCall className="h-4 w-4 mr-2" />
-                      Push DB to Futwork
+                      {UI_COPY.pushToCallingEngine}
                     </Button>
                     <Button
                       type="button"

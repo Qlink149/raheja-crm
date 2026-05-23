@@ -42,6 +42,10 @@ class UnifiedStructuredExtraction(BaseModel):
     schema_version: int = Field(default=2)
     budget_match: bool = False
     budget_category: str = Field(default="Other")
+    stated_budget_cr: str = Field(
+        default="",
+        description="Exact budget in crore if customer stated a number (e.g. 12 for 12 crore); else empty",
+    )
     area_match: bool = False
     location_category: str = Field(default="Other")
     timeline_match: bool = False
@@ -56,6 +60,19 @@ class UnifiedStructuredExtraction(BaseModel):
     # Free-text from transcript for CRM header / configuration (schema v2+)
     preferred_location: str = Field(default="", description="Stated area or neighborhood if any")
     unit_configuration: str = Field(default="", description="BHK or unit type e.g. 2 BHK")
+    carpet_area: str = Field(default="", description="Carpet area if stated e.g. 1200 sq ft")
+    possession_requirement: str = Field(
+        default="", description="Possession timeline if stated e.g. Ready possession, Dec 2026"
+    )
+    purchase_purpose: str = Field(
+        default="", description="Why buying / end-use; distinct from intent_category bucket"
+    )
+    current_residence_type: str = Field(
+        default="", description="Current housing e.g. Rented, Owned, Family home"
+    )
+    project_interest: str = Field(
+        default="", description="Project or development name if stated"
+    )
 
     @field_validator("disposition", mode="before")
     @classmethod

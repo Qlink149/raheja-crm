@@ -5,6 +5,11 @@
       "email": "ravinder@rustomjee.com",
       "full_name": "Ravinder",
       "role": "admin"
+    },
+    {
+      "email": "yogansh@claraai.tech",
+      "full_name": "Yogansh",
+      "role": "admin"
     }
   ]
 }

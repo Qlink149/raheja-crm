@@ -1,4 +1,5 @@
 import axios from "axios";
+import { sanitizeApiErrorMessage } from "./brandLabels";
 
 const rawRoot = (process.env.REACT_APP_BACKEND_URL || "").replace(/\/$/, "");
 
@@ -48,6 +49,15 @@ api.interceptors.response.use(
         window.location.href = "/login";
         return Promise.reject(refreshError);
       }
+    }
+
+    const detail = error.response?.data?.detail;
+    if (typeof detail === "string" && detail) {
+      error.response.data.detail = sanitizeApiErrorMessage(detail);
+    } else if (Array.isArray(detail)) {
+      error.response.data.detail = detail.map((d) =>
+        typeof d === "string" ? sanitizeApiErrorMessage(d) : d
+      );
     }
 
     return Promise.reject(error);

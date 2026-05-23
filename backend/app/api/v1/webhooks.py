@@ -14,6 +14,7 @@ from ...utils.campaign_stats import (
 )
 from ...utils.csv_processor import normalize_phone
 from ...utils.lead_qualification_tags import apply_canonical_tags_to_lead_patch
+from ...utils.context_updates import persist_lead_context_updates
 from ...utils.orphan_call_link import ensure_lead_for_unmatched_webhook
 from ...utils.webhook_lead import (
     call_history_lead_id_value,
@@ -93,6 +94,50 @@ async def _resolve_existing_lead(
             webhook_futwork_id,
         )
     return existing_lead
+
+
+async def _notify_ai_call_summary(
+    db,
+    *,
+    call_sid: str,
+    lead_id: str,
+    unified_extraction: Any,
+    effective_transcript: str,
+    duration_seconds: int,
+) -> None:
+    """Send rep notification after terminal AI extraction (matched + orphan leads)."""
+    lead_row = await db.leads.find_one(
+        {"id": lead_id},
+        {
+            "_id": 0,
+            "id": 1,
+            "full_name": 1,
+            "first_name": 1,
+            "last_name": 1,
+            "assigned_user_id": 1,
+            "assigned_to": 1,
+        },
+    )
+    if not lead_row or not lead_row.get("assigned_user_id"):
+        return
+    summary = (getattr(unified_extraction, "call_summary", None) or "")[:120]
+    if not summary and effective_transcript:
+        summary = str(effective_transcript)[:120] + "..."
+    today = utc_now().strftime("%Y-%m-%d")
+    await create_notification(
+        db,
+        type="ai_call_summary",
+        title="AI Call Summary",
+        message=summary or f"High-intent call ({duration_seconds or 0}s)",
+        lead_id=lead_row["id"],
+        lead_name=_lead_display_name(lead_row),
+        recipient_user_id=lead_row["assigned_user_id"],
+        recipient_name=lead_row.get("assigned_to") or "",
+        assigned_to=lead_row.get("assigned_to") or "",
+        severity="medium",
+        urgency="action_needed",
+        dedupe_key=f"notification:call:{call_sid}:{today}",
+    )
 
 
 def _safe_int(value: Any, default: int = 0) -> int:
@@ -444,7 +489,12 @@ async def futwork_webhook(
         try:
             svc = StructuredAIService(db)
             effective_transcript = transcript or (_as_dict(extracted_data).get("transcript") if extracted_data else "") or ""
-            worthy, reasons = worthy_call_gate(status_raw, effective_transcript)
+            worthy, reasons = worthy_call_gate(
+                status_raw,
+                effective_transcript,
+                duration_seconds=duration_seconds,
+                disposition=disposition,
+            )
             if not worthy:
                 logger.info(
                     "Skipping OpenAI extraction (not worthy) | callSid=%s | status=%s | reasons=%s",
@@ -480,31 +530,15 @@ async def futwork_webhook(
                             "$unset": {"aiPersonaSummary": "", "strategicNextMove": ""},
                         },
                     )
-                    if existing_lead and existing_lead.get("assigned_user_id"):
-                        lead_row = await db.leads.find_one(
-                            {"id": existing_lead["id"]},
-                            {"_id": 0, "id": 1, "full_name": 1, "first_name": 1, "last_name": 1, "assigned_user_id": 1, "assigned_to": 1},
+                    if existing_lead and existing_lead.get("id"):
+                        await _notify_ai_call_summary(
+                            db,
+                            call_sid=call_sid,
+                            lead_id=str(existing_lead["id"]),
+                            unified_extraction=unified_extraction,
+                            effective_transcript=effective_transcript,
+                            duration_seconds=duration_seconds,
                         )
-                        if lead_row:
-                            se = unified_extraction
-                            summary = (getattr(se, "call_summary", None) or "")[:120]
-                            if not summary and effective_transcript:
-                                summary = str(effective_transcript)[:120] + "..."
-                            today = utc_now().strftime("%Y-%m-%d")
-                            await create_notification(
-                                db,
-                                type="ai_call_summary",
-                                title="AI Call Summary",
-                                message=summary or f"High-intent call ({duration_seconds or 0}s)",
-                                lead_id=lead_row["id"],
-                                lead_name=_lead_display_name(lead_row),
-                                recipient_user_id=lead_row["assigned_user_id"],
-                                recipient_name=lead_row.get("assigned_to") or "",
-                                assigned_to=lead_row.get("assigned_to") or "",
-                                severity="medium",
-                                urgency="action_needed",
-                                dedupe_key=f"notification:call:{call_sid}:{today}",
-                            )
                 else:
                     late_lead = await resolve_lead_for_webhook(
                         db,
@@ -540,39 +574,15 @@ async def futwork_webhook(
                             call_sid,
                             lid,
                         )
-                        if late_lead.get("assigned_user_id"):
-                            lead_row = await db.leads.find_one(
-                                {"id": late_lead["id"]},
-                                {
-                                    "_id": 0,
-                                    "id": 1,
-                                    "full_name": 1,
-                                    "first_name": 1,
-                                    "last_name": 1,
-                                    "assigned_user_id": 1,
-                                    "assigned_to": 1,
-                                },
+                        if late_lead.get("id"):
+                            await _notify_ai_call_summary(
+                                db,
+                                call_sid=call_sid,
+                                lead_id=str(late_lead["id"]),
+                                unified_extraction=unified_extraction,
+                                effective_transcript=effective_transcript,
+                                duration_seconds=duration_seconds,
                             )
-                            if lead_row:
-                                se = unified_extraction
-                                summary = (getattr(se, "call_summary", None) or "")[:120]
-                                if not summary and effective_transcript:
-                                    summary = str(effective_transcript)[:120] + "..."
-                                today = utc_now().strftime("%Y-%m-%d")
-                                await create_notification(
-                                    db,
-                                    type="ai_call_summary",
-                                    title="AI Call Summary",
-                                    message=summary or f"High-intent call ({duration_seconds or 0}s)",
-                                    lead_id=lead_row["id"],
-                                    lead_name=_lead_display_name(lead_row),
-                                    recipient_user_id=lead_row["assigned_user_id"],
-                                    recipient_name=lead_row.get("assigned_to") or "",
-                                    assigned_to=lead_row.get("assigned_to") or "",
-                                    severity="medium",
-                                    urgency="action_needed",
-                                    dedupe_key=f"notification:call:{call_sid}:{today}",
-                                )
                     else:
                         logger.warning(
                             "Skipping lead AI patch (no matched lead) | callSid=%s",
@@ -616,6 +626,23 @@ async def futwork_webhook(
                 )
         except Exception:
             logger.exception("Failed to apply disposition delta | callSid=%s", call_sid)
+
+    # ---- Context updates (same pipeline for matched + orphan-created leads) --
+    final_lead_id = str(
+        lead_created_id
+        or (existing_lead or {}).get("id")
+        or internal_lead_id
+        or ""
+    ).strip()
+    if final_lead_id and incoming_terminal and can_advance_lead:
+        try:
+            await persist_lead_context_updates(db, final_lead_id)
+        except Exception:
+            logger.exception(
+                "Failed to persist context_updates | lead_id=%s | callSid=%s",
+                final_lead_id,
+                call_sid,
+            )
 
     # ---- Final summary log --------------------------------------------------
     lead_matched = bool(lead_update_flt) and (
