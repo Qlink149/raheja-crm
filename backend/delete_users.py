@@ -13,7 +13,7 @@ async def main():
     emails_to_delete = [
         "kishore@rustomjee.com", 
         "elton@rustomjee.com", 
-        "tejal@rustomjee.com"
+        "tejal@rustomjee.com11"
     ]
     
     result = await db.users.delete_many({"email": {"$in": emails_to_delete}})
