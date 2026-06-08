@@ -1,7 +1,9 @@
 import asyncio
 import re
 import uvicorn
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -213,6 +215,81 @@ async def _detect_crm_issues_from_calls(db, base: Dict[str, Any]) -> List[str]:
     return issues
 
 
+_IST = ZoneInfo("Asia/Kolkata")
+
+
+def _ist_date_to_utc_bounds(start_date: str, end_date: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Convert YYYY-MM-DD calendar days (IST) to naive UTC bounds for MongoDB."""
+    try:
+        day_start = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=_IST)
+        if end_date:
+            day_end = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=_IST) + timedelta(days=1)
+        else:
+            day_end = day_start + timedelta(days=1)
+        return {
+            "$gte": day_start.astimezone(timezone.utc).replace(tzinfo=None),
+            "$lt": day_end.astimezone(timezone.utc).replace(tzinfo=None),
+        }
+    except ValueError:
+        return None
+
+
+def _call_history_date_clause(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Build created_at filter for call_history (YYYY-MM-DD interpreted as IST days)."""
+    if not start_date and not end_date:
+        return None
+
+    if start_date and not end_date:
+        bounds = _ist_date_to_utc_bounds(start_date)
+        return {"created_at": bounds} if bounds else None
+
+    date_filter: Dict[str, Any] = {}
+    if start_date:
+        try:
+            day_start = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=_IST)
+            date_filter["$gte"] = day_start.astimezone(timezone.utc).replace(tzinfo=None)
+        except ValueError:
+            pass
+    if end_date:
+        try:
+            day_end = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=_IST) + timedelta(
+                days=1
+            )
+            date_filter["$lt"] = day_end.astimezone(timezone.utc).replace(tzinfo=None)
+        except ValueError:
+            pass
+    if date_filter:
+        return {"created_at": date_filter}
+    return None
+
+
+def _legacy_lead_date_clause(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Date filter for legacy leads fallback (call_date with created_at fallback)."""
+    bounds_clause = _call_history_date_clause(start_date, end_date)
+    if not bounds_clause:
+        return None
+    bounds = bounds_clause["created_at"]
+    gte = bounds.get("$gte")
+    lt = bounds.get("$lt")
+    effective = {"$ifNull": ["$call_date", "$created_at"]}
+    expr_parts: List[Dict[str, Any]] = []
+    if gte is not None:
+        expr_parts.append({"$gte": [effective, gte]})
+    if lt is not None:
+        expr_parts.append({"$lt": [effective, lt]})
+    if not expr_parts:
+        return None
+    if len(expr_parts) == 1:
+        return {"$expr": expr_parts[0]}
+    return {"$expr": {"$and": expr_parts}}
+
+
 def _call_history_filter_query(
     campaign: Optional[str],
     status: Optional[str],
@@ -221,6 +298,8 @@ def _call_history_filter_query(
     upload_batch_id: Optional[str] = None,
     lead_id: Optional[str] = None,
     mobile_digits: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     *,
     lead_id_clause: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
@@ -255,7 +334,21 @@ def _call_history_filter_query(
                 or_clauses.append({"mobile_digits": {"$regex": digits[-10:]}})
         parts.append({"$or": or_clauses})
 
+    date_clause = _call_history_date_clause(start_date, end_date)
+    if date_clause:
+        parts.append(date_clause)
+
     return _and_queries(*parts)
+
+
+def _futwork_disposition_exact(value: str) -> Dict[str, Any]:
+    """Exact Futwork disposition match (same logic as disposition filter dropdown)."""
+    return {
+        "$or": [
+            {"disposition": value},
+            {"extracted_data.disposition": value},
+        ]
+    }
 
 
 def _doc_to_call_row(doc: Dict[str, Any]) -> Dict[str, Any]:
@@ -327,6 +420,8 @@ async def get_call_history_summary(
     upload_batch_id: str = None,
     leadId: str = None,
     mobile_digits: str = None,
+    start_date: str = None,
+    end_date: str = None,
     db=Depends(get_db),
 ):
     """Aggregated KPIs for call_history matching the same filters as the list endpoint."""
@@ -340,6 +435,8 @@ async def get_call_history_summary(
             upload_batch_id=upload_batch_id,
             lead_id=leadId,
             mobile_digits=mobile_digits,
+            start_date=start_date,
+            end_date=end_date,
             lead_id_clause=lead_clause,
         )
         total = await db.call_history.count_documents(base)
@@ -348,34 +445,14 @@ async def get_call_history_summary(
             base,
             {"status": {"$regex": r"^completed$", "$options": "i"}},
         )
-        interested_q = _and_queries(
-            base,
-            {
-                "structured_extraction.disposition": {
-                    "$in": ["Hot Lead", "Mildly interested"],
-                }
-            },
-        )
-        semi_q = _and_queries(
-            base,
-            {"structured_extraction.disposition": {"$in": ["Semi-Interested", "Semi-interested"]}},
-        )
-        interested_fallback = _and_queries(
-            base,
-            {"disposition": {"$regex": r"^interested$", "$options": "i"}},
-        )
-        semi_fallback = _and_queries(
-            base,
-            {"disposition": {"$regex": r"^semi[\s-]*interested$", "$options": "i"}},
+        interested_q = _and_queries(base, _futwork_disposition_exact("Interested"))
+        partially_interested_q = _and_queries(
+            base, _futwork_disposition_exact("Partially Interested")
         )
 
         completed = await db.call_history.count_documents(completed_q)
         interested = await db.call_history.count_documents(interested_q)
-        semi_interested = await db.call_history.count_documents(semi_q)
-        if interested == 0:
-            interested = await db.call_history.count_documents(interested_fallback)
-        if semi_interested == 0:
-            semi_interested = await db.call_history.count_documents(semi_fallback)
+        partially_interested = await db.call_history.count_documents(partially_interested_q)
 
         connected_q = _and_queries(base, {"duration": {"$gt": 0}})
         connected_calls = await db.call_history.count_documents(connected_q)
@@ -392,7 +469,7 @@ async def get_call_history_summary(
             "total_calls": total,
             "completed": completed,
             "interested": interested,
-            "semi_interested": semi_interested,
+            "partially_interested": partially_interested,
             "connected_calls": connected_calls,
             "avg_duration_seconds": round(avg_duration) if connected_calls else 0,
         }
@@ -402,7 +479,7 @@ async def get_call_history_summary(
             "total_calls": 0,
             "completed": 0,
             "interested": 0,
-            "semi_interested": 0,
+            "partially_interested": 0,
             "connected_calls": 0,
             "avg_duration_seconds": 0,
         }
@@ -414,6 +491,9 @@ async def get_call_history_ai_batch_summary(
     status: str = None,
     disposition: str = None,
     q: str = None,
+    upload_batch_id: str = None,
+    start_date: str = None,
+    end_date: str = None,
     db=Depends(get_db),
 ):
     """
@@ -421,7 +501,15 @@ async def get_call_history_ai_batch_summary(
     Returns a shape compatible with the frontend \"Batch Summary\" view.
     """
     try:
-        base = _call_history_filter_query(campaign, status, disposition, q)
+        base = _call_history_filter_query(
+            campaign,
+            status,
+            disposition,
+            q,
+            upload_batch_id=upload_batch_id,
+            start_date=start_date,
+            end_date=end_date,
+        )
         # Only consider calls with structured extraction present
         base = _and_queries(base, {"structured_extraction.disposition": {"$exists": True, "$ne": ""}})
 
@@ -531,6 +619,8 @@ async def get_call_history(
     upload_batch_id: str = None,
     leadId: str = None,
     mobile_digits: str = None,
+    start_date: str = None,
+    end_date: str = None,
     page: int = 1,
     size: int = 50,
     limit: int = 0,
@@ -551,6 +641,8 @@ async def get_call_history(
             upload_batch_id=upload_batch_id,
             lead_id=leadId,
             mobile_digits=mobile_digits,
+            start_date=start_date,
+            end_date=end_date,
             lead_id_clause=lead_clause,
         )
 
@@ -617,6 +709,10 @@ async def get_call_history(
                 if digits:
                     ors.append({"mobile_digits": {"$regex": digits}})
                 legacy_parts.append({"$or": ors})
+
+            legacy_date = _legacy_lead_date_clause(start_date, end_date)
+            if legacy_date:
+                legacy_parts.append(legacy_date)
 
             base_query = _and_queries(*legacy_parts)
 

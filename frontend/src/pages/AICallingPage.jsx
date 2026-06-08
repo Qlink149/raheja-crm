@@ -19,6 +19,8 @@ import {
   PhoneOff,
   PhoneMissed,
   Sparkles,
+  Calendar,
+  X,
 } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -37,10 +39,16 @@ import {
   DialogTitle,
 } from "../components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
+import { Calendar as CalendarUI } from "../components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "../components/ui/popover";
 import EmptyState from "../components/feedback/EmptyState";
 import { CallTableSkeleton } from "../components/feedback/Skeletons";
 import { api, campaignsAPI } from "../lib/api";
-import { formatDateTimeIST } from "../lib/dateUtils";
+import {
+  buildCallHistoryDateParams,
+  formatCallHistoryDateLabel,
+  formatDateTimeIST,
+} from "../lib/dateUtils";
 
 const PAGE_SIZE = 50;
 const ROW_HEIGHT = 64; // px, matches the grid row's effective height
@@ -61,7 +69,7 @@ const formatDate = (dateStr) => formatDateTimeIST(dateStr);
 
 const DISPOSITION_STYLES = {
   Interested: "bg-emerald-900/30 text-emerald-300 border-emerald-500/30",
-  "Semi-Interested": "bg-cyan-900/30 text-cyan-300 border-cyan-500/30",
+  "Partially Interested": "bg-cyan-900/30 text-cyan-300 border-cyan-500/30",
   "Not Interested": "bg-red-900/30 text-red-300 border-red-500/30",
   Busy: "bg-yellow-900/30 text-yellow-300 border-yellow-500/30",
   Dropped: "bg-orange-900/30 text-orange-300 border-orange-500/30",
@@ -260,6 +268,7 @@ const AICallingPage = () => {
   const [hasMore, setHasMore] = useState(false);
   const [summary, setSummary] = useState(null);
   const [aiBatchSummary, setAiBatchSummary] = useState(null);
+  const [dateRange, setDateRange] = useState(null);
 
   // Audio player state
   const [isPlaying, setIsPlaying] = useState(false);
@@ -314,6 +323,8 @@ const AICallingPage = () => {
   }, []);
 
   // -------- Params builders (stable) --------
+  const dateParams = useMemo(() => buildCallHistoryDateParams(dateRange), [dateRange]);
+
   const listParams = useCallback(
     (pageNum) => ({
       page: pageNum,
@@ -328,8 +339,17 @@ const AICallingPage = () => {
         ? { upload_batch_id: uploadBatchFilter }
         : {}),
       ...(searchParams.get("leadId") ? { leadId: searchParams.get("leadId") } : {}),
+      ...dateParams,
     }),
-    [selectedCampaign, statusFilter, dispositionFilter, debouncedSearch, uploadBatchFilter, searchParams]
+    [
+      selectedCampaign,
+      statusFilter,
+      dispositionFilter,
+      debouncedSearch,
+      uploadBatchFilter,
+      searchParams,
+      dateParams,
+    ]
   );
 
   const summaryParams = useCallback(
@@ -343,8 +363,9 @@ const AICallingPage = () => {
       ...(uploadBatchFilter && uploadBatchFilter !== "all"
         ? { upload_batch_id: uploadBatchFilter }
         : {}),
+      ...dateParams,
     }),
-    [selectedCampaign, statusFilter, dispositionFilter, debouncedSearch, uploadBatchFilter]
+    [selectedCampaign, statusFilter, dispositionFilter, debouncedSearch, uploadBatchFilter, dateParams]
   );
 
   // -------- Primary fetch on filter change --------
@@ -468,7 +489,7 @@ const AICallingPage = () => {
       total: Number(summary?.total_calls ?? total ?? 0),
       completed: Number(summary?.completed ?? 0),
       interested: Number(summary?.interested ?? 0),
-      semiInterested: Number(summary?.semi_interested ?? 0),
+      partiallyInterested: Number(summary?.partially_interested ?? 0),
       avgDuration: Number(summary?.avg_duration_seconds ?? 0),
     }),
     [summary, total]
@@ -478,7 +499,6 @@ const AICallingPage = () => {
     () => ({
       total: Number(aiBatchSummary?.total_calls ?? 0),
       hot: Number(aiBatchSummary?.hot_leads ?? 0),
-      semi: Number(aiBatchSummary?.semi_interested ?? 0),
       mild: Number(aiBatchSummary?.mildly_interested ?? 0),
       not: Number(aiBatchSummary?.not_interested ?? 0),
       voicemail: Number(aiBatchSummary?.voicemail_wrong_number ?? 0),
@@ -491,7 +511,6 @@ const AICallingPage = () => {
   const aiBuckets = useMemo(
     () => [
       { label: "Hot", value: aiStats.hot },
-      { label: "Semi", value: aiStats.semi },
       { label: "Mild", value: aiStats.mild },
       { label: "Not Interested", value: aiStats.not },
       { label: "Voicemail/Wrong #", value: aiStats.voicemail },
@@ -503,7 +522,7 @@ const AICallingPage = () => {
   const fallbackStatuses = ["completed", "no-answer", "busy", "failed"];
   const fallbackDispositions = [
     "Interested",
-    "Semi-Interested",
+    "Partially Interested",
     "Not Interested",
     "Busy",
     "Dropped",
@@ -519,6 +538,11 @@ const AICallingPage = () => {
     setStatusFilter("all");
     setDispositionFilter("all");
     setSearchQuery("");
+    setDateRange(null);
+  }, []);
+
+  const handleClearDateRange = useCallback(() => {
+    setDateRange(null);
   }, []);
 
   // -------- Virtualizer --------
@@ -573,8 +597,8 @@ const AICallingPage = () => {
               />
               <StatTile
                 icon={Sparkles}
-                label="Semi-Interested"
-                value={stats.semiInterested}
+                label="Partially Interested"
+                value={stats.partiallyInterested}
                 tone="cyan"
                 delay={0.15}
               />
@@ -713,6 +737,55 @@ const AICallingPage = () => {
                     ))}
                   </SelectContent>
                 </Select>
+
+                <div className="flex items-center gap-2">
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        className={
+                          dateRange?.from
+                            ? "bg-[#C5A059]/10 border-[#C5A059]/40 text-white hover:bg-[#C5A059]/15 min-w-[170px] justify-start gap-2"
+                            : "bg-[#1A1A1A] border-white/10 text-[#A3A3A3] hover:bg-white/5 hover:text-white min-w-[170px] justify-start gap-2"
+                        }
+                      >
+                        <Calendar className="w-4 h-4 text-[#C5A059] flex-shrink-0" />
+                        <span className="truncate text-sm">
+                          {formatCallHistoryDateLabel(dateRange)}
+                        </span>
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent
+                      className="w-auto p-0 bg-[#1A1A1A] border-white/10"
+                      align="start"
+                    >
+                      <div className="px-3 pt-3 pb-1 border-b border-white/10">
+                        <p className="text-xs text-[#A3A3A3]">
+                          Pick one day or drag a range. Times use IST.
+                        </p>
+                      </div>
+                      <CalendarUI
+                        mode="range"
+                        selected={dateRange}
+                        onSelect={setDateRange}
+                        className="bg-[#1A1A1A] text-white"
+                      />
+                    </PopoverContent>
+                  </Popover>
+                  {dateRange?.from && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={handleClearDateRange}
+                      className="h-9 px-3 bg-[#1A1A1A] border-white/10 text-[#A3A3A3] hover:text-white hover:border-red-500/40 hover:bg-red-900/20 gap-1.5"
+                      title="Clear date filter"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                      Clear
+                    </Button>
+                  )}
+                </div>
 
                 <div className="relative flex-1 max-w-md">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#525252]" />

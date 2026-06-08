@@ -5,7 +5,6 @@ import { useAuth } from '../../context/AuthContext';
 import { notificationsAPI } from '../../lib/api';
 import {
   LayoutDashboard,
-  Users,
   Megaphone,
   Settings,
   LogOut,
@@ -45,7 +44,6 @@ const DashboardLayout = () => {
     ...(isAdmin
       ? []
       : [{ path: '/my-dashboard', icon: UserCircle, label: 'My Dashboard' }]),
-    { path: '/virtual-customer', icon: Users, label: 'Virtual Customer' },
     { path: '/ai-calling', icon: Phone, label: 'AI Calling' },
     ...(isAdmin
       ? [

@@ -41,6 +41,7 @@ def map_futwork_raw_to_live_key(status_raw: str) -> Optional[str]:
 
 DISPOSITION_KEY_MAP = {
     "interested":     "interested",
+    "partially interested": "semiInterested",
     "semi-interested": "semiInterested",
     "semi interested": "semiInterested",
     "semiinterested": "semiInterested",
