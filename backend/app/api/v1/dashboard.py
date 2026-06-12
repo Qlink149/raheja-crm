@@ -34,23 +34,10 @@ async def get_dashboard_stats(
     qualified_leads = await db.leads.count_documents(
         bucket_query(base_query, "qualified")
     )
-    vip_pipeline = await db.leads.count_documents(
-        bucket_query(base_query, "vip_pipeline")
-    )
     hot_leads = await db.leads.count_documents(bucket_query(base_query, "hot"))
     cold_leads = await db.leads.count_documents(bucket_query(base_query, "cold"))
     dormant_leads = await db.leads.count_documents(bucket_query(base_query, "dormant"))
-
-    warm_leads = await db.leads.count_documents(
-        merge(
-            {
-                "$or": [
-                    {"temperature": "Warm"},
-                    {"status": "Warm Lead"},
-                ]
-            }
-        )
-    )
+    warm_leads = await db.leads.count_documents(bucket_query(base_query, "warm"))
     interested_leads = await db.leads.count_documents(
         merge({"ai_disposition": {"$in": list(_AI_INTERESTED)}})
     )
@@ -118,7 +105,6 @@ async def get_dashboard_stats(
         "site_visits_scheduled": site_visits_scheduled,
         "lost_leads": lost_leads,
         "dormant_leads": dormant_leads,
-        "vip_pipeline": vip_pipeline,
         "qualified_leads": qualified_leads,
         "lead_status_stats": lead_status_stats,
         "lead_source_stats": lead_source_stats,

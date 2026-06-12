@@ -118,8 +118,8 @@ async def run(
     if not settings.MONGO_URL:
         print("MONGO_URL is not set.")
         sys.exit(1)
-    if not dry_run and not settings.OPENAI_API_KEY:
-        print("OPENAI_API_KEY is required for reseed.")
+    if not dry_run and not settings.llm_configured:
+        print("GROQ_API_KEY_1 or OPENAI_API_KEY is required for reseed.")
         sys.exit(1)
 
     client = AsyncIOMotorClient(settings.MONGO_URL)

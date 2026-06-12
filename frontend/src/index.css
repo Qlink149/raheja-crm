@@ -446,6 +446,56 @@ select {
     }
 }
 
+/* Audit utility classes */
+.kicker {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--gold);
+}
+
+.hover-lift {
+    transition: transform 0.25s ease, box-shadow 0.25s ease;
+}
+
+.hover-lift:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 12px 28px -8px rgba(0, 0, 0, 0.45);
+}
+
+.btn-tactile {
+    transition: transform 0.15s ease, background-color 0.15s ease;
+}
+
+.btn-tactile:active {
+    transform: scale(0.97);
+}
+
+.surface-elevated {
+    background: rgba(15, 15, 15, 0.98);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 24px 48px -12px rgba(0, 0, 0, 0.65);
+}
+
+.scrollbar-luxe::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+.scrollbar-luxe::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.scrollbar-luxe::-webkit-scrollbar-thumb {
+    background: var(--gold-dim);
+    border-radius: 3px;
+}
+
+.scrollbar-luxe::-webkit-scrollbar-thumb:hover {
+    background: var(--gold);
+}
+
 /* Animation Delays */
 .delay-100 { animation-delay: 100ms; }
 .delay-200 { animation-delay: 200ms; }

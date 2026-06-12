@@ -282,7 +282,17 @@ async def migrate(
 
     mongo_url = os.environ.get("MONGO_URL", "").strip()
     db_name = os.environ.get("DB_NAME", "rustomjee_db").strip() or "rustomjee_db"
+    groq_keys = [
+        k
+        for k in (
+            os.environ.get("GROQ_API_KEY_1", "").strip(),
+            os.environ.get("GROQ_API_KEY_2", "").strip(),
+            os.environ.get("GROQ_API_KEY_3", "").strip(),
+        )
+        if k
+    ]
     openai_key = (os.environ.get("OPENAI_API_KEY") or os.environ.get("EMERGENT_LLM_KEY") or "").strip()
+    llm_configured = bool(groq_keys) or bool(openai_key)
 
     if not mongo_url and not dry_run:
         raise RuntimeError("Missing MONGO_URL in backend/.env (or environment).")
@@ -334,8 +344,10 @@ async def migrate(
     if dry_run:
         return
 
-    if worthy_count > 0 and not openai_key:
-        raise RuntimeError("OPENAI_API_KEY (or EMERGENT_LLM_KEY) is required when there are worthy leads to extract.")
+    if worthy_count > 0 and not llm_configured:
+        raise RuntimeError(
+            "GROQ_API_KEY_1 (or OPENAI_API_KEY / EMERGENT_LLM_KEY) is required when there are worthy leads to extract."
+        )
 
     client = AsyncIOMotorClient(mongo_url)
     db = client[db_name]

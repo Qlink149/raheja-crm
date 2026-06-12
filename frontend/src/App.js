@@ -1,25 +1,30 @@
-import React from "react";
+import React, { Suspense, lazy } from "react";
 import "@/App.css";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { Toaster } from "./components/ui/sonner";
-import LoginPage from "./pages/LoginPage";
-import DashboardPage from "./pages/DashboardPage";
-import VirtualCustomerPage from "./pages/VirtualCustomerPage";
-import CustomerDetailPage from "./pages/CustomerDetailPage";
-import CampaignsPage from "./pages/CampaignsPage";
-import AICallingPage from "./pages/AICallingPage";
-import SettingsPage from "./pages/SettingsPage";
-import SalesDashboardPage from "./pages/SalesDashboardPage";
-import MyDashboardPage from "./pages/MyDashboardPage";
-import MarketingDashboardPage from "./pages/MarketingDashboardPage";
-import NotificationsPage from "./pages/NotificationsPage";
-import DashboardLayout from "./components/layout/DashboardLayout";
+
+const LoginPage = lazy(() => import("./pages/LoginPage"));
+const DashboardPage = lazy(() => import("./pages/DashboardPage"));
+const VirtualCustomerPage = lazy(() => import("./pages/VirtualCustomerPage"));
+const CustomerDetailPage = lazy(() => import("./pages/CustomerDetailPage"));
+const CampaignsPage = lazy(() => import("./pages/CampaignsPage"));
+const AICallingPage = lazy(() => import("./pages/AICallingPage"));
+const SettingsPage = lazy(() => import("./pages/SettingsPage"));
+const SalesDashboardPage = lazy(() => import("./pages/SalesDashboardPage"));
+const MyDashboardPage = lazy(() => import("./pages/MyDashboardPage"));
+const MarketingDashboardPage = lazy(() => import("./pages/MarketingDashboardPage"));
+const NotificationsPage = lazy(() => import("./pages/NotificationsPage"));
+const DashboardLayout = lazy(() => import("./components/layout/DashboardLayout"));
 
 const LoadingScreen = () => (
   <div className="min-h-screen bg-[#0A0A0A] flex items-center justify-center">
     <p className="text-[#C5A059] animate-pulse">Loading...</p>
   </div>
+);
+
+const PageSuspense = ({ children }) => (
+  <Suspense fallback={<LoadingScreen />}>{children}</Suspense>
 );
 
 const ProtectedRoute = ({ children }) => {
@@ -67,7 +72,9 @@ function AppRoutes() {
         path="/login"
         element={
           <PublicRoute>
-            <LoginPage />
+            <PageSuspense>
+              <LoginPage />
+            </PageSuspense>
           </PublicRoute>
         }
       />
@@ -75,7 +82,9 @@ function AppRoutes() {
         path="/"
         element={
           <ProtectedRoute>
-            <DashboardLayout />
+            <PageSuspense>
+              <DashboardLayout />
+            </PageSuspense>
           </ProtectedRoute>
         }
       >
@@ -84,7 +93,9 @@ function AppRoutes() {
           path="dashboard"
           element={
             <AdminRoute>
-              <DashboardPage />
+              <PageSuspense>
+                <DashboardPage />
+              </PageSuspense>
             </AdminRoute>
           }
         />
@@ -92,18 +103,43 @@ function AppRoutes() {
           path="my-dashboard"
           element={
             <SalesRoute>
-              <MyDashboardPage />
+              <PageSuspense>
+                <MyDashboardPage />
+              </PageSuspense>
             </SalesRoute>
           }
         />
-        <Route path="virtual-customer" element={<VirtualCustomerPage />} />
-        <Route path="customer/:id" element={<CustomerDetailPage />} />
-        <Route path="ai-calling" element={<AICallingPage />} />
+        <Route
+          path="virtual-customer"
+          element={
+            <PageSuspense>
+              <VirtualCustomerPage />
+            </PageSuspense>
+          }
+        />
+        <Route
+          path="customer/:id"
+          element={
+            <PageSuspense>
+              <CustomerDetailPage />
+            </PageSuspense>
+          }
+        />
+        <Route
+          path="ai-calling"
+          element={
+            <PageSuspense>
+              <AICallingPage />
+            </PageSuspense>
+          }
+        />
         <Route
           path="campaigns"
           element={
             <AdminRoute>
-              <CampaignsPage />
+              <PageSuspense>
+                <CampaignsPage />
+              </PageSuspense>
             </AdminRoute>
           }
         />
@@ -111,7 +147,9 @@ function AppRoutes() {
           path="sales-dashboard"
           element={
             <AdminRoute>
-              <SalesDashboardPage />
+              <PageSuspense>
+                <SalesDashboardPage />
+              </PageSuspense>
             </AdminRoute>
           }
         />
@@ -119,16 +157,27 @@ function AppRoutes() {
           path="marketing-dashboard"
           element={
             <AdminRoute>
-              <MarketingDashboardPage />
+              <PageSuspense>
+                <MarketingDashboardPage />
+              </PageSuspense>
             </AdminRoute>
           }
         />
-        <Route path="notifications" element={<NotificationsPage />} />
+        <Route
+          path="notifications"
+          element={
+            <PageSuspense>
+              <NotificationsPage />
+            </PageSuspense>
+          }
+        />
         <Route
           path="settings"
           element={
             <AdminRoute>
-              <SettingsPage />
+              <PageSuspense>
+                <SettingsPage />
+              </PageSuspense>
             </AdminRoute>
           }
         />
@@ -145,6 +194,7 @@ function App() {
         <AppRoutes />
         <Toaster
           position="top-right"
+          theme="dark"
           toastOptions={{
             style: {
               background: "#1A1A1A",

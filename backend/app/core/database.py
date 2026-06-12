@@ -61,14 +61,12 @@ async def initialize_db():
     await db.leads.create_index("qualification_category")
     await db.leads.create_index("intent_category")
     await db.leads.create_index("project")
-    await db.leads.create_index("is_vip")
     await db.leads.create_index([("updated_at", -1)])   # default sort
 
     # Lead — compound: most common filter combos + sort
     await db.leads.create_index([("budget_category", 1), ("updated_at", -1)])
     await db.leads.create_index([("temperature", 1), ("updated_at", -1)])
     await db.leads.create_index([("location_category", 1), ("updated_at", -1)])
-    await db.leads.create_index([("is_vip", 1), ("updated_at", -1)])
     await db.leads.create_index("assigned_user_id")
     await db.leads.create_index([("assigned_user_id", 1), ("updated_at", -1)])
     await db.leads.create_index("upload_batch_id")

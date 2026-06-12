@@ -58,7 +58,7 @@ class LeadService:
         search: Optional[str],
         filters: Optional[Dict[str, Any]],
     ) -> Dict[str, Any]:
-        """Mongo match for list/count. VIP expands legacy rows missing `is_vip`."""
+        """Mongo match for list/count."""
         import re
 
         parts: List[Dict[str, Any]] = []
@@ -115,8 +115,7 @@ class LeadService:
                     continue
                 if skip_qual_filters and key in (
                     "qualification_category",
-                    "temperature",
-                    "is_vip",
+                    "intent_category",
                     "project",
                     "status",
                     "sales_qualification",
@@ -178,23 +177,8 @@ class LeadService:
                 if key == "status":
                     other["status"] = value
                     continue
-                if key == "is_vip" and value is True:
-                    vip_expand = True
-                elif key == "is_vip":
-                    other[key] = value
                 else:
                     other[key] = value
-
-        if vip_expand and not skip_qual_filters:
-            parts.append(
-                {
-                    "$or": [
-                        {"is_vip": True},
-                        {"temperature": "Hot"},
-                        {"budget_category": {"$in": ["5 Cr+", "2-5 Cr"]}},
-                    ]
-                }
-            )
 
         has_date_filter = days is not None or start_date or end_date
 

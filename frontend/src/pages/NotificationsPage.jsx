@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Bell, ArrowLeft, AlertTriangle, Phone, Calendar, Clock, Sparkles } from "lucide-react";
 import { notificationsAPI } from "../lib/api";
+import { isNotificationUnread, sanitizeNotificationText } from "../lib/brandLabels";
 import { Button } from "../components/ui/button";
 import { toast } from "sonner";
 
@@ -23,7 +24,7 @@ const iconFor = (type) => {
   if (type === "stale_followup" || type === "dormant_lead") return Clock;
   if (type === "task_overdue" || type === "task_reminder" || type === "reminder") return Calendar;
   if (type === "ai_call_summary") return Sparkles;
-  if (type === "hot_vip_lead" || type === "new_lead_assigned" || type === "lead_transferred") return AlertTriangle;
+  if (type === "hot_lead" || type === "new_lead_assigned" || type === "lead_transferred") return AlertTriangle;
   return Clock;
 };
 
@@ -43,12 +44,14 @@ const NotificationsPage = () => {
   const navigate = useNavigate();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
 
   const load = async () => {
-    setLoading(true);
+    if (!hasLoadedOnce) setLoading(true);
     try {
       const { data } = await notificationsAPI.getAll();
       setItems(data || []);
+      setHasLoadedOnce(true);
     } catch {
       toast.error("Failed to load notifications");
     } finally {
@@ -83,7 +86,11 @@ const NotificationsPage = () => {
   const markOne = async (id) => {
     try {
       await notificationsAPI.markRead(id);
-      setItems((prev) => prev.map((n) => (n.id === id ? { ...n, is_read: true } : n)));
+      if (String(id).startsWith("auto-")) {
+        setItems((prev) => prev.filter((n) => n.id !== id));
+      } else {
+        setItems((prev) => prev.map((n) => (n.id === id ? { ...n, is_read: true } : n)));
+      }
     } catch {
       toast.error("Could not update notification");
     }
@@ -104,14 +111,14 @@ const NotificationsPage = () => {
             <p className="text-[#52525B] text-sm mt-1">System alerts grouped by date</p>
           </motion.div>
         </motion.div>
-        {items.some((n) => !n.is_read) && (
+        {items.some(isNotificationUnread) && (
           <Button size="sm" variant="outline" onClick={markAll} className="border-[#C5A059]/40 text-[#C5A059]">
             Mark all read
           </Button>
         )}
       </motion.div>
 
-      {loading ? (
+      {loading && !hasLoadedOnce ? (
         <motion.div className="space-y-3">
           {[1, 2, 3, 4].map((i) => (
             <motion.div key={i} className="glass-card rounded-lg p-4 animate-pulse h-20 bg-white/5" />
@@ -133,7 +140,7 @@ const NotificationsPage = () => {
                       key={n.id}
                       layout
                       className={`glass-card rounded-lg p-4 flex gap-3 cursor-pointer border ${
-                        !n.is_read ? `${style.border} ${style.bg}` : "border-white/5"
+                        isNotificationUnread(n) ? `${style.border} ${style.bg}` : "border-white/5"
                       }`}
                       onClick={() => {
                         markOne(n.id);
@@ -147,15 +154,19 @@ const NotificationsPage = () => {
                       </motion.div>
                       <motion.div className="flex-1 min-w-0">
                         <motion.div className="flex items-center gap-2">
-                          <p className="text-white font-medium text-sm">{n.title || n.lead_name}</p>
+                          <p className="text-white font-medium text-sm">
+                            {sanitizeNotificationText(n.title || n.lead_name)}
+                          </p>
                           <span className={`text-[10px] uppercase ${style.text}`}>{style.label}</span>
                         </motion.div>
-                        <p className="text-[#A1A1AA] text-xs mt-1">{n.message}</p>
+                        <p className="text-[#A1A1AA] text-xs mt-1">{sanitizeNotificationText(n.message)}</p>
                         {n.is_auto && (
                           <span className="text-[10px] text-[#52525B] mt-2 inline-block">Auto alert</span>
                         )}
                       </motion.div>
-                      {!n.is_read && <span className="w-2 h-2 rounded-full bg-[#C5A059] flex-shrink-0 mt-2" />}
+                      {isNotificationUnread(n) && (
+                        <span className="w-2 h-2 rounded-full bg-[#C5A059] flex-shrink-0 mt-2" />
+                      )}
                     </motion.div>
                   );
                 })}

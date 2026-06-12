@@ -419,6 +419,11 @@ async def futwork_webhook(
         if transcript:
             lead_set["transcript"] = transcript
 
+        # If we got a terminal update, mark futwork_sync_status as pushed
+        # so this lead is removed from the pending eligible push queue.
+        if incoming_terminal:
+            lead_set["futwork_sync_status"] = "pushed"
+
     # Maintain alias field for frontend compatibility when lead has residence location.
     # (Some writers only set current_residence_location; frontend also reads the alias.)
     # We do not overwrite with empty.

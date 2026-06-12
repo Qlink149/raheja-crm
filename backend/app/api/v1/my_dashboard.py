@@ -22,7 +22,6 @@ LEAD_PROJECTION = {
     "temperature": 1,
     "status": 1,
     "disposition": 1,
-    "is_vip": 1,
     "assigned_to": 1,
     "assigned_to_name": 1,
     "sales_qualification": 1,

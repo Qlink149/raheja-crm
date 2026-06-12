@@ -20,6 +20,12 @@ class Settings:
     MONGO_URL: str = os.environ.get('MONGO_URL', '')
     DB_NAME: str = os.environ.get('DB_NAME', 'rustomjee_db')
     OPENAI_API_KEY: str = os.environ.get('OPENAI_API_KEY') or os.environ.get('EMERGENT_LLM_KEY', '')
+    OPENAI_MODEL: str = os.environ.get('OPENAI_MODEL', 'gpt-4o').strip() or 'gpt-4o'
+    GROQ_API_KEY_1: str = os.environ.get('GROQ_API_KEY_1', '').strip()
+    GROQ_API_KEY_2: str = os.environ.get('GROQ_API_KEY_2', '').strip()
+    GROQ_API_KEY_3: str = os.environ.get('GROQ_API_KEY_3', '').strip()
+    GROQ_MODEL: str = os.environ.get('GROQ_MODEL', 'llama-3.3-70b-versatile').strip() or 'llama-3.3-70b-versatile'
+    GROQ_BASE_URL: str = os.environ.get('GROQ_BASE_URL', 'https://api.groq.com/openai/v1').strip() or 'https://api.groq.com/openai/v1'
     FUTWORK_WEBHOOK_SECRET: str = os.environ.get("FUTWORK_WEBHOOK_SECRET", "").strip()
     FUTWORK_API_KEY: str = os.environ.get("FUTWORK_API_KEY", "").strip()
     FUTWORK_AGENT_ID: str = os.environ.get("FUTWORK_AGENT_ID", "").strip()
@@ -68,5 +74,13 @@ class Settings:
     @property
     def auto_create_lead_from_orphan_webhook(self) -> bool:
         return self.AUTO_CREATE_LEAD_FROM_ORPHAN_WEBHOOK not in ("0", "false", "no", "off")
+
+    @property
+    def groq_api_keys(self) -> list:
+        return [k for k in (self.GROQ_API_KEY_1, self.GROQ_API_KEY_2, self.GROQ_API_KEY_3) if k]
+
+    @property
+    def llm_configured(self) -> bool:
+        return bool(self.groq_api_keys) or bool(self.OPENAI_API_KEY)
 
 settings = Settings()

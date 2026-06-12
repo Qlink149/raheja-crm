@@ -1,12 +1,42 @@
 """Persisted in-app notifications (bell feed)."""
 from __future__ import annotations
 
+import re
 import uuid
 from typing import Any, Dict, Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from ..core.time_utils import iso_utc_now, utc_now
+
+CALLING_ENGINE_NAME = "Calling Engine"
+WHITELABEL_AGENT_LABEL = "Rustomjee AI Sales Agent"
+
+_SOURCE_LABELS = {
+    "Futwork CSV Import": "Platform Pipeline",
+    "futwork_orphan_call": "Inbound Call",
+    "futwork": CALLING_ENGINE_NAME,
+}
+
+
+def map_lead_source_label(raw: Any) -> str:
+    s = str(raw or "").strip()
+    if not s:
+        return "Direct"
+    if s in _SOURCE_LABELS:
+        return _SOURCE_LABELS[s]
+    if re.search(r"futwork", s, re.IGNORECASE):
+        return CALLING_ENGINE_NAME
+    return s
+
+
+def sanitize_notification_text(text: Any) -> str:
+    if text is None:
+        return ""
+    s = str(text)
+    s = re.sub(r"\bFutwork\s+Agent\b", WHITELABEL_AGENT_LABEL, s, flags=re.IGNORECASE)
+    s = re.sub(r"\bFutwork\b", CALLING_ENGINE_NAME, s, flags=re.IGNORECASE)
+    return s
 
 
 def _lead_display_name(lead: Dict[str, Any]) -> str:
@@ -41,11 +71,13 @@ async def create_notification(
 
     now_dt = utc_now()
     now_iso = iso_utc_now()
+    clean_title = sanitize_notification_text(title)
+    clean_message = sanitize_notification_text(message)
     doc: Dict[str, Any] = {
         "id": str(uuid.uuid4()),
         "type": type,
-        "title": title,
-        "message": message,
+        "title": clean_title,
+        "message": clean_message,
         "lead_id": lead_id or "",
         "lead_name": lead_name or "",
         "recipient_user_id": recipient_user_id,
@@ -76,7 +108,7 @@ async def notify_new_lead_assigned(
 ) -> Optional[str]:
     lead_id = lead.get("id", "")
     name = _lead_display_name(lead)
-    source = lead.get("lead_source") or lead.get("source") or "Unknown"
+    source = map_lead_source_label(lead.get("lead_source") or lead.get("source") or "Unknown")
     return await create_notification(
         db,
         type="new_lead_assigned",

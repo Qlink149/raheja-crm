@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { useAuth } from '../../context/AuthContext';
-import { notificationsAPI } from '../../lib/api';
+import NotificationBell from './NotificationBell';
 import {
   LayoutDashboard,
+  Users,
   Megaphone,
   Settings,
   LogOut,
@@ -14,15 +15,10 @@ import {
   ChevronRight,
   Sun,
   Moon,
-  Clock,
-  AlertTriangle,
   Phone,
-  Calendar,
   BarChart3,
-  FileCode,
   UserCircle,
   TrendingUp,
-  FileText
 } from 'lucide-react';
 
 const DashboardLayout = () => {
@@ -30,12 +26,10 @@ const DashboardLayout = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [showNotifications, setShowNotifications] = useState(false);
   const [darkMode, setDarkMode] = useState(() => {
     const saved = localStorage.getItem('darkMode');
     return saved !== null ? JSON.parse(saved) : true;
   });
-  const [notifications, setNotifications] = useState([]);
 
   const navItems = [
     ...(isAdmin
@@ -44,6 +38,7 @@ const DashboardLayout = () => {
     ...(isAdmin
       ? []
       : [{ path: '/my-dashboard', icon: UserCircle, label: 'My Dashboard' }]),
+    { path: '/virtual-customer', icon: Users, label: 'Virtual Customer' },
     { path: '/ai-calling', icon: Phone, label: 'AI Calling' },
     ...(isAdmin
       ? [
@@ -55,21 +50,6 @@ const DashboardLayout = () => {
     { path: '/notifications', icon: Bell, label: 'Notifications' },
     ...(isAdmin ? [{ path: '/settings', icon: Settings, label: 'Settings' }] : []),
   ];
-
-  const fetchNotifications = useCallback(async () => {
-    try {
-      const response = await notificationsAPI.getAll();
-      setNotifications(response.data || []);
-    } catch (error) {
-      console.error('Failed to fetch notifications:', error);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchNotifications();
-    const interval = setInterval(fetchNotifications, 30000);
-    return () => clearInterval(interval);
-  }, [fetchNotifications]);
 
   useEffect(() => {
     localStorage.setItem('darkMode', JSON.stringify(darkMode));
@@ -91,66 +71,6 @@ const DashboardLayout = () => {
   const toggleDarkMode = () => {
     setDarkMode(!darkMode);
   };
-
-  const handleMarkAllRead = async () => {
-    try {
-      await notificationsAPI.markAllRead();
-      setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
-      await fetchNotifications();
-    } catch (error) {
-      console.error('Failed to mark all read:', error);
-    }
-  };
-
-  const handleMarkRead = async (id) => {
-    try {
-      await notificationsAPI.markRead(id);
-      setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, is_read: true } : n)));
-    } catch (error) {
-      console.error('Failed to mark notification read:', error);
-    }
-  };
-
-  const getNotificationIcon = (type) => {
-    switch (type) {
-      case 'rnr_followup':
-        return Phone;
-      case 'stale_followup':
-      case 'dormant_lead':
-        return Clock;
-      case 'task_overdue':
-      case 'task_reminder':
-        return Calendar;
-      case 'hot_vip_lead':
-      case 'new_lead_assigned':
-      case 'lead_transferred':
-        return AlertTriangle;
-      case 'ai_call_summary':
-        return Bell;
-      case 'reminder':
-        return Calendar;
-      case 'alert':
-        return AlertTriangle;
-      case 'message':
-        return Megaphone;
-      default:
-        return Bell;
-    }
-  };
-
-  const getUrgencyColor = (notification) => {
-    const sev = (notification.severity || '').toLowerCase();
-    const urg = (notification.urgency || '').toLowerCase();
-    if (sev === 'high' || urg === 'urgent') {
-      return { bg: 'bg-red-500/10', text: 'text-red-500', label: 'High' };
-    }
-    if (sev === 'medium' || urg === 'action_needed') {
-      return { bg: 'bg-yellow-500/10', text: 'text-yellow-500', label: 'Medium' };
-    }
-    return { bg: 'bg-blue-500/10', text: 'text-blue-500', label: 'Low' };
-  };
-
-  const unreadCount = notifications.filter(n => !n.is_read).length;
 
   return (
     <div className={`min-h-screen flex ${darkMode ? 'bg-[#0A0A0A]' : 'bg-gray-100'}`}>
@@ -282,21 +202,28 @@ const DashboardLayout = () => {
       )}
 
       {/* Main Content */}
-      <main className="flex-1 lg:ml-64">
+      <main className="flex-1 lg:ml-64 min-w-0">
         {/* Top Bar */}
         <header className={`sticky top-0 z-30 ${darkMode ? 'bg-[#0A0A0A]/80' : 'bg-white/80'} backdrop-blur-xl border-b ${darkMode ? 'border-white/10' : 'border-gray-200'}`}>
-          <div className="flex items-center justify-between px-4 lg:px-8 py-4">
+          <div className="flex items-center justify-between px-4 lg:px-8 py-4 gap-2">
             {/* Mobile Menu Button */}
             <button
               onClick={() => setSidebarOpen(true)}
-              className={`lg:hidden ${darkMode ? 'text-[#A1A1AA] hover:text-white' : 'text-gray-400 hover:text-gray-600'}`}
+              className={`lg:hidden flex-shrink-0 ${darkMode ? 'text-[#A1A1AA] hover:text-white' : 'text-gray-400 hover:text-gray-600'}`}
               data-testid="open-sidebar-btn"
             >
               <Menu size={24} />
             </button>
 
+            {/* Mobile page title */}
+            <div className="lg:hidden flex-1 min-w-0">
+              <span className={`text-sm font-medium capitalize truncate block ${darkMode ? 'text-[#C5A059]' : 'text-gray-800'}`}>
+                {(location.pathname.split('/')[1] || 'dashboard').replace(/-/g, ' ')}
+              </span>
+            </div>
+
             {/* Breadcrumb */}
-            <div className="hidden lg:flex items-center gap-2 text-sm">
+            <div className="hidden lg:flex items-center gap-2 text-sm flex-1">
               <span className={darkMode ? 'text-[#52525B]' : 'text-gray-400'}>Home</span>
               <ChevronRight size={14} className={darkMode ? 'text-[#52525B]' : 'text-gray-400'} />
               <span className="text-[#C5A059] capitalize">
@@ -316,111 +243,7 @@ const DashboardLayout = () => {
                 {darkMode ? <Sun size={20} strokeWidth={1.5} /> : <Moon size={20} strokeWidth={1.5} />}
               </button>
 
-              {/* Notifications */}
-              <div className="relative">
-                <button
-                  onClick={() => setShowNotifications(!showNotifications)}
-                  className={`relative p-2 rounded-lg transition-colors ${darkMode ? 'text-[#A1A1AA] hover:text-white hover:bg-white/10' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'}`}
-                  data-testid="notifications-btn"
-                >
-                  <Bell size={20} strokeWidth={1.5} />
-                  {unreadCount > 0 && (
-                    <span className="absolute top-0 right-0 w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center">
-                      {unreadCount > 9 ? '9+' : unreadCount}
-                    </span>
-                  )}
-                </button>
-
-                {/* Notifications Panel */}
-                <AnimatePresence>
-                  {showNotifications && (
-                    <motion.div
-                      initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                      animate={{ opacity: 1, y: 0, scale: 1 }}
-                      exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                      className={`absolute right-0 mt-2 w-80 ${darkMode ? 'bg-[#1A1A1A] border-white/10' : 'bg-white border-gray-200'} border rounded-lg shadow-xl overflow-hidden z-50`}
-                      data-testid="notifications-panel"
-                    >
-                      <div className={`px-4 py-3 border-b ${darkMode ? 'border-white/10' : 'border-gray-200'} flex items-center justify-between`}>
-                        <div>
-                          <h3 className={`font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>Notifications</h3>
-                          <p className={`text-xs ${darkMode ? 'text-[#52525B]' : 'text-gray-500'}`}>
-                            {unreadCount} unread
-                          </p>
-                        </div>
-                        {unreadCount > 0 && (
-                          <button onClick={(e) => { e.stopPropagation(); handleMarkAllRead(); }} className="text-[#C5A059] text-xs hover:underline" data-testid="mark-all-read-btn">
-                            Mark all read
-                          </button>
-                        )}
-                      </div>
-                      
-                      <div className="max-h-96 overflow-y-auto">
-                        {notifications.length === 0 ? (
-                          <div className="p-8 text-center">
-                            <Bell className={`mx-auto ${darkMode ? 'text-[#52525B]' : 'text-gray-300'}`} size={32} />
-                            <p className={`mt-2 text-sm ${darkMode ? 'text-[#52525B]' : 'text-gray-500'}`}>
-                              No pending notifications
-                            </p>
-                          </div>
-                        ) : (
-                          notifications.slice(0, 20).map((notification, idx) => {
-                            const IconComponent = getNotificationIcon(notification.type);
-                            const urgency = getUrgencyColor(notification);
-                            return (
-                              <div
-                                key={notification.id || idx}
-                                onClick={() => {
-                                  handleMarkRead(notification.id);
-                                  if (notification.lead_id) {
-                                    setShowNotifications(false);
-                                    navigate(`/customer/${notification.lead_id}`);
-                                  }
-                                }}
-                                className={`px-4 py-3 border-b ${darkMode ? 'border-white/5 hover:bg-white/5' : 'border-gray-100 hover:bg-gray-50'} cursor-pointer transition-colors ${!notification.is_read ? (darkMode ? 'bg-white/[0.02]' : 'bg-blue-50/50') : ''}`}
-                                data-testid={`notification-${idx}`}
-                              >
-                                <div className="flex items-start gap-3">
-                                  <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${urgency.bg} ${urgency.text}`}>
-                                    <IconComponent size={14} />
-                                  </div>
-                                  <div className="flex-1 min-w-0">
-                                    <div className="flex items-center gap-2">
-                                      <p className={`text-sm font-medium truncate ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-                                        {notification.title || notification.lead_name}
-                                      </p>
-                                      {!notification.is_read && <span className="w-2 h-2 rounded-full bg-[#C5A059] flex-shrink-0" />}
-                                    </div>
-                                    <p className={`text-xs ${darkMode ? 'text-[#A1A1AA]' : 'text-gray-600'} mt-0.5 line-clamp-2`}>
-                                      {notification.message}
-                                    </p>
-                                    <span className={`text-[10px] ${urgency.text} mt-1 block uppercase tracking-wider`}>
-                                      {urgency.label}
-                                    </span>
-                                  </div>
-                                </div>
-                              </div>
-                            );
-                          })
-                        )}
-                      </div>
-
-                      <div className={`px-4 py-2 border-t ${darkMode ? 'border-white/10' : 'border-gray-200'}`}>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setShowNotifications(false);
-                            navigate('/notifications');
-                          }}
-                          className="text-[#C5A059] text-sm hover:underline w-full text-center"
-                        >
-                          View All Alerts
-                        </button>
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
+              <NotificationBell darkMode={darkMode} />
 
               {/* User Avatar - Mobile */}
               <div className="lg:hidden w-8 h-8 rounded-full bg-[#C5A059] flex items-center justify-center text-black text-sm font-medium">
@@ -431,18 +254,11 @@ const DashboardLayout = () => {
         </header>
 
         {/* Page Content */}
-        <div className="p-4 lg:p-8">
+        <div className="p-4 lg:p-8 min-w-0">
           <Outlet />
         </div>
       </main>
 
-      {/* Close notifications when clicking outside */}
-      {showNotifications && (
-        <div 
-          className="fixed inset-0 z-40" 
-          onClick={() => setShowNotifications(false)}
-        />
-      )}
     </div>
   );
 };

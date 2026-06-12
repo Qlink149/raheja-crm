@@ -1,12 +1,10 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { analyticsAPI } from "../lib/api";
 import { toast } from "sonner";
 import {
   Users,
-  TrendingUp,
-  TrendingDown,
   Award,
   Clock,
   Flame,
@@ -15,7 +13,6 @@ import {
   ChevronUp,
   ChevronDown,
   ArrowUpDown,
-  X,
   Eye,
   MapPin,
   CheckCircle,
@@ -35,27 +32,24 @@ import {
   Legend,
 } from "recharts";
 import { Button } from "../components/ui/button";
+import {
+  Dialog,
+   DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "../components/ui/dialog";
+import { FetchError, LoadingTable } from "../components/loading";
 
 const PERSON_COLORS = ["#C5A059", "#3B82F6", "#10B981", "#F59E0B", "#8B5CF6", "#EC4899", "#14B8A6", "#EF4444"];
 const TEMP_COLORS = { Hot: "#EF4444", Warm: "#F59E0B", Cold: "#3B82F6", Dormant: "#6B7280" };
 const REP_LEADS_PAGE = 150;
-
-const emptyTotals = () => ({
-  total: 0,
-  hot: 0,
-  warm: 0,
-  cold: 0,
-  dormant: 0,
-  rnr: 0,
-  site_visits: 0,
-  deals_closed: 0,
-});
 
 const SalesDashboardPage = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [dashboard, setDashboard] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [sortField, setSortField] = useState("deals_closed");
   const [sortDir, setSortDir] = useState("desc");
   const [selectedPerson, setSelectedPerson] = useState(null);
@@ -67,11 +61,14 @@ const SalesDashboardPage = () => {
   const repFetchBusy = useRef(false);
 
   const fetchData = async () => {
+    setLoading(true);
+    setError(null);
     try {
       const response = await analyticsAPI.getSalesDashboard();
       setDashboard(response.data);
-    } catch {
+    } catch (err) {
       toast.error("Failed to load sales data");
+      setError(err);
     } finally {
       setLoading(false);
     }
@@ -218,7 +215,7 @@ const SalesDashboardPage = () => {
     salesData.filter((s) => s.name !== "Unassigned").length;
   const usersSalesCount = teamMeta?.users_sales_count;
 
-  const totalStats = useMemo(() => dashboard?.totals || emptyTotals(), [dashboard]);
+  const totalStats = useMemo(() => dashboard?.totals ?? null, [dashboard]);
 
   const handleSort = (field) => {
     if (sortField === field) setSortDir((d) => (d === "desc" ? "asc" : "desc"));
@@ -249,6 +246,7 @@ const SalesDashboardPage = () => {
   }, [salesData]);
 
   const tempDistribution = useMemo(() => {
+    if (!totalStats) return [];
     return [
       { name: "Hot", value: totalStats.hot, color: TEMP_COLORS.Hot },
       { name: "Warm", value: totalStats.warm, color: TEMP_COLORS.Warm },
@@ -292,7 +290,7 @@ const SalesDashboardPage = () => {
     }
   };
 
-  if (loading) {
+  if (loading && !dashboard) {
     return (
       <motion.div className="space-y-6 max-w-6xl mx-auto p-2">
         <motion.div className="h-10 w-64 rounded bg-white/5 animate-pulse" />
@@ -302,6 +300,23 @@ const SalesDashboardPage = () => {
           ))}
         </motion.div>
         <motion.div className="h-48 rounded-lg bg-white/5 animate-pulse" />
+      </motion.div>
+    );
+  }
+
+  if (!dashboard) {
+    return (
+      <motion.div className="space-y-8">
+        <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }}>
+          <h1 className="font-serif text-3xl text-white" data-testid="sales-dashboard-title">
+            Sales Team Dashboard
+          </h1>
+        </motion.div>
+        <FetchError
+          title="Sales dashboard unavailable"
+          message="We couldn't load sales team data. Check your connection and try again."
+          onRetry={fetchData}
+        />
       </motion.div>
     );
   }
@@ -330,7 +345,7 @@ const SalesDashboardPage = () => {
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.1 }}
-        className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3"
+        className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-8 gap-3"
       >
         {[
           { label: "Total Leads", value: totalStats.total, icon: Users, color: "text-[#C5A059]" },
@@ -344,12 +359,14 @@ const SalesDashboardPage = () => {
         ].map((s) => (
           <motion.div
             key={s.label}
-            className="glass-card rounded-lg p-3 text-center"
+            className="glass-card rounded-lg p-3 text-center min-w-0"
             data-testid={`stat-${s.label.toLowerCase().replace(/\s/g, "-")}`}
           >
             <s.icon className={`mx-auto ${s.color}`} size={20} />
-            <p className="text-[#52525B] text-[10px] uppercase mt-1">{s.label}</p>
-            <p className={`font-serif text-xl ${s.color}`}>{s.value}</p>
+            <p className="text-[#52525B] text-[10px] uppercase mt-1 truncate">{s.label}</p>
+            <p className={`font-serif text-xl tabular-nums truncate ${s.color}`} title={String(s.value)}>
+              {s.value}
+            </p>
           </motion.div>
         ))}
       </motion.div>
@@ -378,8 +395,6 @@ const SalesDashboardPage = () => {
                   { key: "rnr", label: "RNR", icon: <PhoneOff size={11} className="text-yellow-500" /> },
                   { key: "site_visits", label: "Site Visits" },
                   { key: "deals_closed", label: "Deals Closed" },
-                  { key: "conversion_rate", label: "Conv. %" },
-                  { key: "last_active", label: "Last Active" },
                 ].map((col) => (
                   <th
                     key={col.key}
@@ -462,27 +477,6 @@ const SalesDashboardPage = () => {
                     </span>
                   </td>
                   <td className="py-3 px-3 text-center">
-                    <motion.div className="flex items-center justify-center gap-1">
-                      {s.conversion_rate > 10 ? (
-                        <TrendingUp size={12} className="text-green-500" />
-                      ) : s.conversion_rate === 0 ? (
-                        <TrendingDown size={12} className="text-red-400" />
-                      ) : null}
-                      <span
-                        className={`text-sm font-medium ${
-                          s.conversion_rate > 10
-                            ? "text-green-500"
-                            : s.conversion_rate === 0
-                              ? "text-red-400"
-                              : "text-[#A1A1AA]"
-                        }`}
-                      >
-                        {s.conversion_rate}%
-                      </span>
-                    </motion.div>
-                  </td>
-                  <td className="py-3 px-3 text-center text-[#52525B] text-xs">{formatDate(s.last_active)}</td>
-                  <td className="py-3 px-3 text-center">
                     <Button
                       size="sm"
                       variant="ghost"
@@ -503,52 +497,6 @@ const SalesDashboardPage = () => {
             </tbody>
           </table>
         </div>
-      </motion.div>
-
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.3 }}
-        className="glass-card rounded-lg p-6"
-      >
-        <h3 className="font-serif text-xl text-white mb-1">Performance Ranking</h3>
-        <p className="text-[#52525B] text-sm mb-6">
-          Top 10 by closed deals (tie-break: site visits, then lead volume). Full team in table below.
-        </p>
-        <motion.div className="space-y-3">
-          {rankedData.map((s, idx) => {
-            const maxClosed = Math.max(...rankedData.map((r) => r.deals_closed || 0), 1);
-            const closed = s.deals_closed || 0;
-            const c = PERSON_COLORS[idx % PERSON_COLORS.length];
-            return (
-              <motion.div key={s.name} className="flex items-center gap-4">
-                <span className="text-[#C5A059] font-serif text-lg w-8 text-right">
-                  #{s.rank || idx + 1}
-                </span>
-                <motion.div
-                  className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-medium flex-shrink-0"
-                  style={{ backgroundColor: `${c}20`, color: c }}
-                >
-                  {s.name.charAt(0)}
-                </motion.div>
-                <span className="text-white text-sm w-32 truncate">{s.name}</span>
-                <motion.div className="flex-1 h-6 bg-black/30 rounded-full overflow-hidden relative">
-                  <motion.div
-                    className="h-full rounded-full transition-all duration-700 flex items-center px-3"
-                    style={{
-                      width: `${Math.max((closed / maxClosed) * 100, closed > 0 ? 12 : 4)}%`,
-                      backgroundColor: `${c}40`,
-                    }}
-                  >
-                    <span className="text-white text-xs font-medium whitespace-nowrap">
-                      {closed} closed · {s.site_visits} visits · {s.total} leads
-                    </span>
-                  </motion.div>
-                </motion.div>
-              </motion.div>
-            );
-          })}
-        </motion.div>
       </motion.div>
 
       <motion.div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -580,72 +528,67 @@ const SalesDashboardPage = () => {
           className="glass-card rounded-lg p-6"
         >
           <h3 className="font-serif text-xl text-white mb-6">Team Lead Temperature Distribution</h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <PieChart>
-              <Pie
-                data={tempDistribution}
-                cx="50%"
-                cy="50%"
-                innerRadius={60}
-                outerRadius={100}
-                paddingAngle={4}
-                dataKey="value"
-              >
-                {tempDistribution.map((e, i) => (
-                  <Cell key={i} fill={e.color} />
-                ))}
-              </Pie>
-              <Tooltip
-                content={({ active, payload }) =>
-                  active && payload?.length ? (
-                    <motion.div className="bg-[#1A1A1A] border border-white/10 rounded-lg p-3 shadow-xl">
-                      <p className="text-[#C5A059] font-medium">{payload[0].name}</p>
-                      <p className="text-white">{payload[0].value} leads</p>
-                    </motion.div>
-                  ) : null
-                }
-              />
-              <Legend />
-            </PieChart>
-          </ResponsiveContainer>
+          {tempDistribution.length > 0 ? (
+            <ResponsiveContainer width="100%" height={300}>
+              <PieChart>
+                <Pie
+                  data={tempDistribution}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={60}
+                  outerRadius={100}
+                  paddingAngle={4}
+                  dataKey="value"
+                >
+                  {tempDistribution.map((e, i) => (
+                    <Cell key={i} fill={e.color} />
+                  ))}
+                </Pie>
+                <Tooltip
+                  content={({ active, payload }) =>
+                    active && payload?.length ? (
+                      <motion.div className="bg-[#1A1A1A] border border-white/10 rounded-lg p-3 shadow-xl">
+                        <p className="text-[#C5A059] font-medium">{payload[0].name}</p>
+                        <p className="text-white">{payload[0].value} leads</p>
+                      </motion.div>
+                    ) : null
+                  }
+                />
+                <Legend />
+              </PieChart>
+            </ResponsiveContainer>
+          ) : (
+            <p className="text-[#52525B] text-sm text-center py-16">
+              No temperature distribution data for the current team.
+            </p>
+          )}
         </motion.div>
       </motion.div>
 
-      <AnimatePresence>
-        {selectedPerson && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 bg-black/60 flex items-start justify-center pt-10 overflow-y-auto pb-10"
-            onClick={closeRepModal}
-          >
-            <motion.div
-              initial={{ opacity: 0, y: 30, scale: 0.95 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 30, scale: 0.95 }}
-              className="bg-[#0F0F0F] border border-white/10 rounded-xl w-full max-w-4xl mx-4 p-6 shadow-2xl"
-              onClick={(e) => e.stopPropagation()}
-              data-testid="drilldown-modal"
-            >
-              <motion.div className="flex items-center justify-between mb-6">
-                <motion.div className="flex items-center gap-4">
-                  <motion.div className="w-12 h-12 rounded-full bg-[#C5A059]/20 flex items-center justify-center text-[#C5A059] text-xl font-serif">
+      <Dialog open={!!selectedPerson} onOpenChange={(open) => !open && closeRepModal()}>
+        <DialogContent
+          className="bg-[#0F0F0F] border-white/10 text-white max-w-4xl max-h-[90vh] overflow-y-auto"
+          data-testid="drilldown-modal"
+        >
+          {selectedPerson && (
+            <>
+              <DialogHeader className="mb-2">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-full bg-[#C5A059]/20 flex items-center justify-center text-[#C5A059] text-xl font-serif">
                     {selectedPerson.name.charAt(0)}
-                  </motion.div>
-                  <motion.div>
-                    <h2 className="font-serif text-2xl text-white">{selectedPerson.name}</h2>
+                  </div>
+                  <div className="min-w-0">
+                    <DialogTitle className="font-serif text-2xl text-white text-left">
+                      {selectedPerson.name}
+                    </DialogTitle>
                     <p className="text-[#A1A1AA] text-sm">
-                      {selectedPerson.total} leads assigned | Conv. rate: {selectedPerson.conversion_rate}%
+                      {selectedPerson.total} leads assigned
                     </p>
-                  </motion.div>
-                </motion.div>
-                <Button variant="ghost" onClick={closeRepModal} className="text-[#A1A1AA] hover:text-white">
-                  <X size={20} />
-                </Button>
-              </motion.div>
+                  </div>
+                </div>
+              </DialogHeader>
 
-              <motion.div className="grid grid-cols-5 gap-3 mb-6">
+              <motion.div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
                 {[
                   { label: "Total Assigned", value: selectedPerson.total, color: "text-[#C5A059]", bg: "bg-[#C5A059]/10" },
                   { label: "Contacted", value: selectedPerson.contacted ?? 0, color: "text-blue-400", bg: "bg-blue-500/10" },
@@ -675,6 +618,9 @@ const SalesDashboardPage = () => {
                 onScroll={onLeadListScroll}
                 className="max-h-80 overflow-y-auto space-y-2 pr-2"
               >
+                {repLeadsLoading && repLeads.length === 0 ? (
+                  <LoadingTable rows={5} />
+                ) : null}
                 {sortedRepLeads.map((lead) => {
                   const displayName =
                     lead.full_name ||
@@ -718,10 +664,10 @@ const SalesDashboardPage = () => {
                   );
                 })}
               </motion.div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </motion.div>
   );
 };

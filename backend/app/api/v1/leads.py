@@ -34,7 +34,7 @@ router = APIRouter()
 _FAILURE_INSERT_CHUNK = 1000
 
 SALES_QUALIFICATION_VALUES = frozenset(
-    {"Cold Qualified", "Hot Lead", "VIP Pipeline"}
+    {"Cold Qualified", "Hot Lead", "Warm Lead"}
 )
 
 
@@ -46,7 +46,6 @@ def _build_list_filters(
     temperature=None,
     qualification_category=None,
     project=None,
-    vip_only=False,
     campaign_id=None,
     campaignId=None,
     disposition=None,
@@ -81,8 +80,6 @@ def _build_list_filters(
         filters["end_date"] = end_date
     if project and project != "all":
         filters["project"] = project
-    if vip_only and not use_bucket:
-        filters["is_vip"] = True
     batch_id = campaignId or None
     if batch_id:
         filters["upload_batch_id"] = batch_id
@@ -117,7 +114,6 @@ async def list_leads(
     temperature: Optional[str] = None,
     qualification_category: Optional[str] = None,
     project: Optional[str] = None,
-    vip_only: bool = False,
     campaign_id: Optional[str] = None,
     campaignId: Optional[str] = None,
     disposition: Optional[str] = None,
@@ -141,7 +137,6 @@ async def list_leads(
         temperature=temperature,
         qualification_category=qualification_category,
         project=project,
-        vip_only=vip_only,
         campaign_id=campaign_id,
         campaignId=campaignId,
         disposition=disposition,
@@ -171,7 +166,6 @@ async def get_leads_count(
     temperature: Optional[str] = None,
     qualification_category: Optional[str] = None,
     project: Optional[str] = None,
-    vip_only: bool = False,
     search: Optional[str] = None,
     campaign_id: Optional[str] = None,
     campaignId: Optional[str] = None,
@@ -196,7 +190,6 @@ async def get_leads_count(
         temperature=temperature,
         qualification_category=qualification_category,
         project=project,
-        vip_only=vip_only,
         campaign_id=campaign_id,
         campaignId=campaignId,
         disposition=disposition,

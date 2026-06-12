@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -20,11 +21,14 @@ import {
 } from "lucide-react";
 import { Input } from "../components/ui/input";
 import { Badge } from "../components/ui/badge";
-import { ScrollArea } from "../components/ui/scroll-area";
+import LeadCard from "../components/LeadCard";
+import { useColumnCount } from "../hooks/useColumnCount";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import EmptyState from "../components/feedback/EmptyState";
 import { LeadGridSkeleton } from "../components/feedback/Skeletons";
+import LoadingOverlay from "../components/loading/LoadingOverlay";
 import { api, campaignsAPI } from "../lib/api";
+import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import { DASHBOARD_BUCKET_LABELS } from "../lib/adapters/dashboardAdapter";
 import {
   Select,
@@ -33,6 +37,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../components/ui/select";
+import { ScrollArea } from "../components/ui/scroll-area";
 import { UI_COPY } from "../lib/brandLabels";
 
 function PlatformSyncBadge({ status }) {
@@ -63,20 +68,23 @@ const VirtualCustomerPage = () => {
   const [leads, setLeads] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [totalCount, setTotalCount] = useState(0);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
+  const [totalCount, setTotalCount] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [debouncedSearch, flushSearch] = useDebouncedValue(searchQuery, 400, { minLength: 2 });
   const [projects, setProjects] = useState([]);
   const [page, setPage] = useState(0);
   const [hasMore, setHasMore] = useState(true);
   const sentinelRef = useRef(null);
+  const scrollContainerRef = useRef(null);
+  const columnCount = useColumnCount();
   const PAGE_SIZE = 50;
+  const ROW_HEIGHT = 200;
   
   // Filter states
   const [activeCategory, setActiveCategory] = useState("all");
   const [budgetFilter, setBudgetFilter] = useState(searchParams.get("budget") || "all");
   const [locationFilter, setLocationFilter] = useState(searchParams.get("location") || "all");
-  const [vipFilter, setVipFilter] = useState(searchParams.get("vip") === "true");
   const [intentFilter, setIntentFilter] = useState(searchParams.get("intent") || "all");
   const [temperatureFilter, setTemperatureFilter] = useState(searchParams.get("temperature") || "all");
   const [qualificationFilter, setQualificationFilter] = useState(
@@ -141,7 +149,6 @@ const VirtualCustomerPage = () => {
     setLocationFilter(searchParams.get("location") || "all");
     setTemperatureFilter(searchParams.get("temperature") || "all");
     setIntentFilter(searchParams.get("intent") || "all");
-    setVipFilter(searchParams.get("vip") === "true");
     setAssignedRepFilter(searchParams.get("assigned_rep") || "all");
     setDashboardBucketFilter(searchParams.get("dashboard_bucket") || "");
     setDaysFilter(searchParams.get("days") || "");
@@ -162,12 +169,6 @@ const VirtualCustomerPage = () => {
       setFutworkSyncFilter("pushed");
     }
   }, [searchParams]);
-
-  // Debounce search input 400ms
-  useEffect(() => {
-    const t = setTimeout(() => setDebouncedSearch(searchQuery), 400);
-    return () => clearTimeout(t);
-  }, [searchQuery]);
 
   useEffect(() => {
     fetchProjects();
@@ -190,16 +191,14 @@ const VirtualCustomerPage = () => {
     };
   }, []);
 
-  // Reset and reload when filters or debounced search change
+  // Reload when filters or debounced search change (keep previous leads visible during refetch)
   useEffect(() => {
-    setLeads([]);
     setPage(0);
     setHasMore(true);
     fetchLeads(0);
   }, [
     budgetFilter,
     locationFilter,
-    vipFilter,
     intentFilter,
     temperatureFilter,
     qualificationFilter,
@@ -219,7 +218,7 @@ const VirtualCustomerPage = () => {
 
   // Infinite scroll observer
   useEffect(() => {
-    if (!sentinelRef.current) return;
+    if (!sentinelRef.current || !scrollContainerRef.current) return;
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries[0].isIntersecting && hasMore && !loading && !loadingMore) {
@@ -228,7 +227,7 @@ const VirtualCustomerPage = () => {
           fetchMore(nextPage);
         }
       },
-      { threshold: 0.1 }
+      { threshold: 0.1, root: scrollContainerRef.current }
     );
     observer.observe(sentinelRef.current);
     return () => observer.disconnect();
@@ -260,8 +259,8 @@ const VirtualCustomerPage = () => {
 
     if (budgetFilter !== "all") params.append("budget_category", budgetFilter);
     if (locationFilter !== "all") params.append("location_category", locationFilter);
-    if (!bucket && vipFilter) params.append("vip_only", "true");
     if (intentFilter !== "all") params.append("intent_category", intentFilter);
+    if (!bucket && temperatureFilter !== "all") params.append("temperature", temperatureFilter);
     if (!bucket && qualificationFilter !== "all") {
       params.append("qualification_category", qualificationFilter);
     }
@@ -306,17 +305,20 @@ const VirtualCustomerPage = () => {
         const data = leadsRes.value.data || [];
         setLeads(data);
         setHasMore(data.length === PAGE_SIZE);
-      } else {
+        setHasLoadedOnce(true);
+      } else if (!hasLoadedOnce) {
         setLeads([]);
         setHasMore(false);
       }
       if (countRes.status === "fulfilled") {
-        setTotalCount(countRes.value.data.count || 0);
+        setTotalCount(countRes.value.data.count ?? 0);
       }
     } catch (error) {
       console.error("Error fetching leads:", error);
       toast.error("Couldn't load leads. Try refreshing.");
-      setLeads([]);
+      if (!hasLoadedOnce) {
+        setLeads([]);
+      }
     } finally {
       setLoading(false);
     }
@@ -333,44 +335,37 @@ const VirtualCustomerPage = () => {
       setHasMore(data.length === PAGE_SIZE);
     } catch (error) {
       console.error("Error loading more:", error);
+      toast.error("Couldn't load more leads. Try again.");
     } finally {
       setLoadingMore(false);
     }
   };
+
+  const isInitialLoading = loading && !hasLoadedOnce;
+  const isRefetching = loading && hasLoadedOnce;
 
   const handleCategoryChange = (category) => {
     setActiveCategory(category);
     // Reset filters when changing category
     if (category === "budget") {
       setLocationFilter("all");
-      setVipFilter(false);
       setIntentFilter("all");
       setProjectFilter("all");
     } else if (category === "location") {
       setBudgetFilter("all");
-      setVipFilter(false);
       setIntentFilter("all");
       setProjectFilter("all");
-    } else if (category === "vip") {
-      setBudgetFilter("all");
-      setLocationFilter("all");
-      setIntentFilter("all");
-      setProjectFilter("all");
-      setVipFilter(true);
     } else if (category === "intent") {
       setBudgetFilter("all");
       setLocationFilter("all");
-      setVipFilter(false);
       setProjectFilter("all");
     } else if (category === "project") {
       setBudgetFilter("all");
       setLocationFilter("all");
-      setVipFilter(false);
       setIntentFilter("all");
     } else {
       setBudgetFilter("all");
       setLocationFilter("all");
-      setVipFilter(false);
       setIntentFilter("all");
       setTemperatureFilter("all");
       setProjectFilter("all");
@@ -408,8 +403,8 @@ const VirtualCustomerPage = () => {
 
   const getQualificationBadgeClass = (qc) => {
     const v = (qc || "").trim();
-    if (v === "VIP Pipeline") return "bg-purple-500/20 text-purple-300 border border-purple-500/30";
-    if (v === "Dormant") return "bg-orange-500/20 text-orange-300 border border-orange-500/30";
+    if (v === "Warm") return "bg-orange-500/20 text-orange-300 border border-orange-500/30";
+    if (v === "Dormant") return "bg-gray-500/20 text-gray-300 border border-gray-500/30";
     if (v === "Qualified") return "bg-emerald-900/30 text-emerald-300 border border-emerald-500/30";
     if (v === "Hot") return "badge-hot";
     if (v === "Cold") return "badge-cold";
@@ -438,6 +433,8 @@ const VirtualCustomerPage = () => {
     switch (qc) {
       case "Hot":
         return <Flame className="w-4 h-4 text-red-400" />;
+      case "Warm":
+        return <Sun className="w-4 h-4 text-orange-400" />;
       case "Cold":
         return <Snowflake className="w-4 h-4 text-blue-400" />;
       case "Qualified":
@@ -488,19 +485,35 @@ const VirtualCustomerPage = () => {
     return bucket === "5 Cr+" || bucket === "2-5 Cr";
   };
 
+  const rowCount = useMemo(
+    () => Math.ceil(leads.length / columnCount) || 0,
+    [leads.length, columnCount]
+  );
+
+  const virtualizer = useVirtualizer({
+    count: rowCount,
+    getScrollElement: () => scrollContainerRef.current,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: 2,
+  });
+
+  const handleLeadSelect = useCallback(
+    (leadId) => navigate(`/customer/${leadId}`),
+    [navigate]
+  );
+
   const categories = [
     { id: "all", label: "All Leads", icon: Users },
     { id: "budget", label: "Budget Sensitive", icon: Wallet },
     { id: "location", label: "Location Sensitive", icon: MapPin },
     { id: "project", label: "Project Based", icon: Building2 },
-    { id: "vip", label: "VIP / HNI", icon: Crown },
     { id: "intent", label: "Intent Based", icon: Target },
   ];
 
   const budgetOptions = ["all", "<1 Cr", "1-2 Cr", "2-5 Cr", "5 Cr+"];
   const locationOptions = ["all", "South Mumbai", "Thane", "Bandra/BKC", "Suburbs", "Other"];
   const intentOptions = ["all", "Investor", "Home Seeker"];
-  const qualificationOptions = ["all", "Qualified", "VIP Pipeline", "Hot", "Cold", "Dormant"];
+  const qualificationOptions = ["all", "Qualified", "Hot", "Warm", "Cold", "Dormant"];
 
   const handleFutworkSyncChange = (value) => {
     setFutworkSyncFilter(value);
@@ -549,7 +562,13 @@ const VirtualCustomerPage = () => {
           Virtual Customer Explorer
         </h1>
         <p className="text-[#A1A1AA] mt-1">
-          {totalCount > 0 ? `${totalCount.toLocaleString()} leads in pipeline` : "Browse and filter your lead pipeline"}
+          {isInitialLoading
+            ? "Loading pipeline…"
+            : totalCount != null && totalCount > 0
+              ? `${totalCount.toLocaleString()} leads in pipeline`
+              : hasLoadedOnce && totalCount === 0
+                ? "No leads in pipeline"
+                : "Browse and filter your lead pipeline"}
         </p>
         {(urlDashboardBucket || urlDays || urlStartDate) && (
           <div
@@ -794,7 +813,7 @@ const VirtualCustomerPage = () => {
             <motion.div
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
-              className="flex items-center gap-4 mb-6"
+              className="flex flex-wrap items-center gap-4 mb-6"
             >
               <div className="relative flex-1 max-w-md">
                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[#525252]" />
@@ -803,6 +822,7 @@ const VirtualCustomerPage = () => {
                   placeholder="Search by name or project..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && flushSearch()}
                   className="pl-12 bg-[#1A1A1A] border-white/10 text-white placeholder:text-[#525252] focus:border-[#C5A059] h-12"
                 />
               </div>
@@ -827,15 +847,29 @@ const VirtualCustomerPage = () => {
               <div className="flex items-center gap-2 text-[#A3A3A3]">
                 <Users className="w-4 h-4" />
                 <span className="text-sm">
-                  <span className="text-[#C5A059] font-semibold">{totalCount}</span> leads
-                  found
+                  {hasLoadedOnce ? (
+                    <>
+                      <span className="text-[#C5A059] font-semibold tabular-nums">
+                        {totalCount != null ? totalCount.toLocaleString() : "—"}
+                      </span>{" "}
+                      leads found
+                      {isRefetching && (
+                        <span className="text-[#C5A059] ml-1">(refreshing…)</span>
+                      )}
+                    </>
+                  ) : (
+                    <span className="text-[#737373]">— leads found</span>
+                  )}
                 </span>
               </div>
             </motion.div>
 
             {/* Leads List */}
-            <ScrollArea className="h-[calc(100vh-180px)]">
-              {loading ? (
+            <div
+              ref={scrollContainerRef}
+              className="relative h-[calc(100vh-220px)] min-h-[320px] overflow-y-auto scrollbar-luxe"
+            >
+              {isInitialLoading ? (
                 <div className="pr-4">
                   <LeadGridSkeleton count={9} />
                 </div>
@@ -850,7 +884,6 @@ const VirtualCustomerPage = () => {
                       setActiveCategory("all");
                       setBudgetFilter("all");
                       setLocationFilter("all");
-                      setVipFilter(false);
                       setIntentFilter("all");
                       setTemperatureFilter("all");
                       setQualificationFilter("all");
@@ -860,99 +893,49 @@ const VirtualCustomerPage = () => {
                   }}
                 />
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 pr-4">
-                  {leads.map((lead) => (
-                    <motion.div
-                      key={lead.id}
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-                      onClick={() => navigate(`/customer/${lead.id}`)}
-                      className="glass-card rounded-lg p-5 cursor-pointer group hover-lift"
-                      whileHover={{ scale: 1.01 }}
-                      data-testid={`lead-card-${lead.id}`}
-                    >
-                      <div className="flex items-start gap-4">
-                        {/* Avatar */}
-                        <div className="flex-shrink-0 w-14 h-14 rounded-full bg-gradient-to-br from-[#C5A059] to-[#8A6D3B] flex items-center justify-center text-black font-semibold text-lg">
-                          {getInitials(lead.full_name)}
-                        </div>
-
-                        {/* Info */}
-                        <div className="flex-1 min-w-0 overflow-hidden">
-                          <div className="flex items-center gap-2 mb-1">
-                            <h3 className="text-white font-medium truncate max-w-[140px]" title={getDisplayName(lead.full_name)}>
-                              {getDisplayName(lead.full_name)}
-                            </h3>
-                            {lead.vip_category && (
-                              <Crown className="w-4 h-4 text-[#C5A059] flex-shrink-0" />
-                            )}
-                          </div>
-                          <p className="text-[#A3A3A3] text-sm truncate max-w-[180px] mb-2" title={lead.project || "N/A"}>
-                            {lead.project || "N/A"}
-                          </p>
-                          <div className="flex items-center gap-2 flex-wrap">
-                            {getLeadQualificationTag(lead) ? (
-                              <span
-                                className={`px-2 py-0.5 text-xs rounded-sm flex items-center gap-1 flex-shrink-0 ${getQualificationBadgeClass(
-                                  getLeadQualificationTag(lead)
-                                )}`}
-                              >
-                                {getQualificationIcon(getLeadQualificationTag(lead))}
-                                {getLeadQualificationTag(lead)}
-                              </span>
-                            ) : null}
-                            <PlatformSyncBadge status={lead.futwork_sync_status} />
-                            <span
-                              className={`text-xs whitespace-nowrap px-2 py-0.5 rounded-sm tabular-nums ${
-                                isHniBudget(lead)
-                                  ? "badge-hni font-semibold"
-                                  : "text-[#A3A3A3] bg-white/5 border border-white/5"
-                              }`}
-                              data-testid={`lead-budget-${lead.id}`}
-                            >
-                              {formatBudgetLabel(lead)}
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* Arrow */}
-                        <ChevronRight className="w-5 h-5 text-[#525252] group-hover:text-[#C5A059] transition-colors flex-shrink-0" />
-                      </div>
-
-                      {/* Status Bar */}
-                      <div className="mt-4 pt-3 border-t border-white/5 flex items-center justify-between">
-                        <span
-                          className={`text-xs px-2 py-1 rounded ${
-                            lead.status === "Qualified"
-                              ? "bg-emerald-900/30 text-emerald-300"
-                              : lead.status === "Open"
-                              ? "bg-[#C5A059]/20 text-[#C5A059]"
-                              : "bg-red-900/30 text-red-300"
-                          }`}
+                <div className="relative">
+                  <div
+                    className="relative w-full pr-4"
+                    style={{ height: `${virtualizer.getTotalSize()}px` }}
+                  >
+                    {virtualizer.getVirtualItems().map((virtualRow) => {
+                      const rowLeads = leads.slice(
+                        virtualRow.index * columnCount,
+                        virtualRow.index * columnCount + columnCount
+                      );
+                      return (
+                        <div
+                          key={virtualRow.key}
+                          className="absolute left-0 w-full grid gap-4"
+                          style={{
+                            height: `${virtualRow.size}px`,
+                            transform: `translateY(${virtualRow.start}px)`,
+                            gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))`,
+                          }}
                         >
-                          {lead.status || "—"}
-                        </span>
-                        <span className="text-[#525252] text-xs">
-                          {lead.location_category}
-                        </span>
-                      </div>
-                    </motion.div>
-                  ))}
+                          {rowLeads.map((lead) => (
+                            <LeadCard key={lead.id} lead={lead} onSelect={handleLeadSelect} />
+                          ))}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <LoadingOverlay show={isRefetching} />
                 </div>
               )}
 
-              {/* Infinite scroll sentinel */}
               <div ref={sentinelRef} className="h-8" />
               {loadingMore && (
                 <div className="flex justify-center py-4">
                   <div className="w-6 h-6 border-2 border-[#C5A059] border-t-transparent rounded-full animate-spin" />
                 </div>
               )}
-              {!hasMore && leads.length > 0 && (
-                <p className="text-center text-[#525252] text-xs py-4">All {totalCount} leads loaded</p>
+              {!hasMore && leads.length > 0 && totalCount != null && (
+                <p className="text-center text-[#525252] text-xs py-4">
+                  All {totalCount.toLocaleString()} leads loaded
+                </p>
               )}
-            </ScrollArea>
+            </div>
           </div>
         </motion.div>
     </motion.div>

@@ -18,11 +18,7 @@ class LeadDetail(BaseModel):
     location_category: str = "Other"
     budget_category: str = "Other"
     intent_category: str = "Other"
-    is_vip: bool = False
     is_hni: bool = False
-
-    # VIP display field (used by frontend for crown icon)
-    vip_category: Optional[str] = ""
 
     # AI Context fields from CSV
     configuration: str = ""

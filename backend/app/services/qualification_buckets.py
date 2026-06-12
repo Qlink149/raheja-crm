@@ -6,7 +6,7 @@ _AI_INTERESTED = ("Hot Lead", "Semi-Interested", "Semi-interested", "Mildly inte
 _VIP_BUDGET_TIERS = ("5 Cr+", "2-5 Cr")
 
 VALID_DASHBOARD_BUCKETS = frozenset(
-    {"hot", "cold", "dormant", "qualified", "vip_pipeline"}
+    {"hot", "warm", "cold", "dormant", "qualified"}
 )
 
 
@@ -21,10 +21,7 @@ def _legacy_qualified_positive() -> Dict[str, Any]:
 
 def _legacy_vip_positive() -> Dict[str, Any]:
     return {
-        "$or": [
-            {"is_vip": True},
-            {"budget_category": {"$in": list(_VIP_BUDGET_TIERS)}},
-        ]
+        "budget_category": {"$in": list(_VIP_BUDGET_TIERS)}
     }
 
 
@@ -73,7 +70,6 @@ def _legacy_hot_match() -> Dict[str, Any]:
             {"temperature": "Hot"},
             {"status": {"$ne": "Lost"}},
             {"$nor": [_legacy_qualified_positive()]},
-            {"is_vip": {"$ne": True}},
             {"budget_category": {"$nin": list(_VIP_BUDGET_TIERS)}},
         ]
     }
@@ -85,7 +81,6 @@ def _legacy_cold_match() -> Dict[str, Any]:
             {"temperature": "Cold"},
             {"status": {"$ne": "Lost"}},
             {"$nor": [_legacy_qualified_positive()]},
-            {"is_vip": {"$ne": True}},
             {"budget_category": {"$nin": list(_VIP_BUDGET_TIERS)}},
         ]
     }
@@ -137,15 +132,15 @@ def bucket_query(base: Dict[str, Any], bucket: str) -> Dict[str, Any]:
     """Return Mongo match for a dashboard KPI bucket."""
     key = (bucket or "").strip().lower()
     if key == "hot":
-        return qc_or_legacy(base, "Hot", _legacy_hot_match())
+        return qc_or_legacy(base, "Hot", _legacy_vip_match())
+    if key == "warm":
+        return qc_or_legacy(base, "Warm", _legacy_hot_match())
     if key == "cold":
         return qc_or_legacy(base, "Cold", _legacy_cold_match())
     if key == "dormant":
         return dormant_bucket_query(base)
     if key == "qualified":
         return qc_or_legacy(base, "Qualified", _legacy_qualified_match())
-    if key == "vip_pipeline":
-        return qc_or_legacy(base, "VIP Pipeline", _legacy_vip_match())
     raise ValueError(f"Unknown dashboard_bucket: {bucket}")
 
 
@@ -182,9 +177,16 @@ def _agg_not_legacy_qualified_positive() -> Dict[str, Any]:
 
 def _agg_legacy_vip_positive() -> Dict[str, Any]:
     return {
-        "$or": [
-            {"$eq": [{"$ifNull": ["$is_vip", False]}, True]},
-            {"$in": [{"$ifNull": ["$budget_category", ""]}, list(_VIP_BUDGET_TIERS)]},
+        "$in": [{"$ifNull": ["$budget_category", ""]}, list(_VIP_BUDGET_TIERS)]
+    }
+
+
+def _agg_legacy_vip_match() -> Dict[str, Any]:
+    return {
+        "$and": [
+            {"$ne": ["$status", "Lost"]},
+            _agg_not_legacy_qualified_positive(),
+            _agg_legacy_vip_positive(),
         ]
     }
 
@@ -195,7 +197,6 @@ def _agg_legacy_hot_match() -> Dict[str, Any]:
             {"$eq": ["$temperature", "Hot"]},
             {"$ne": ["$status", "Lost"]},
             _agg_not_legacy_qualified_positive(),
-            {"$ne": [{"$ifNull": ["$is_vip", False]}, True]},
             {
                 "$not": {
                     "$in": [{"$ifNull": ["$budget_category", ""]}, list(_VIP_BUDGET_TIERS)]
@@ -211,7 +212,6 @@ def _agg_legacy_cold_match() -> Dict[str, Any]:
             {"$eq": ["$temperature", "Cold"]},
             {"$ne": ["$status", "Lost"]},
             _agg_not_legacy_qualified_positive(),
-            {"$ne": [{"$ifNull": ["$is_vip", False]}, True]},
             {
                 "$not": {
                     "$in": [{"$ifNull": ["$budget_category", ""]}, list(_VIP_BUDGET_TIERS)]
@@ -236,12 +236,13 @@ def _agg_warm_match() -> Dict[str, Any]:
         "$cond": [
             {
                 "$or": [
+                    {"$eq": ["$qualification_category", "Warm"]},
                     {"$eq": ["$temperature", "Warm"]},
                     {"$regexMatch": {"input": "$ls", "regex": r"(?i)^\s*warm\s*lead\s*$"}},
                 ]
             },
             1,
-            0,
+            {"$cond": [{"$and": [_agg_missing_qc(), _agg_legacy_hot_match()]}, 1, 0]},
         ]
     }
 
@@ -265,7 +266,7 @@ def _agg_dormant_match() -> Dict[str, Any]:
 def sales_metrics_temperature_add_fields() -> Dict[str, Any]:
     """Per-lead 0/1 flags for sales dashboard aggregation ($addFields stage)."""
     return {
-        "hot": _agg_qc_or_legacy("Hot", _agg_legacy_hot_match()),
+        "hot": _agg_qc_or_legacy("Hot", _agg_legacy_vip_match()),
         "warm": _agg_warm_match(),
         "cold": _agg_qc_or_legacy("Cold", _agg_legacy_cold_match()),
         "dormant": _agg_dormant_match(),

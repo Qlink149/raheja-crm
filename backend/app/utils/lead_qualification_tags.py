@@ -7,8 +7,7 @@ from typing import Any, Dict, Optional, Tuple
 from ..services.structured_ai_service import qualification_category_from_matches
 from .lead_tag_sync import is_non_contactable_status
 
-_VIP_BUDGET_TIERS = frozenset({"5 Cr+", "2-5 Cr"})
-_VALID_QC = frozenset({"Qualified", "VIP Pipeline", "Hot", "Cold", "Dormant"})
+_VALID_QC = frozenset({"Qualified", "Hot", "Warm", "Cold", "Dormant"})
 
 
 def _as_bool(value: Any) -> Optional[bool]:
@@ -43,16 +42,7 @@ def expected_qualification_category(lead: Dict[str, Any]) -> Optional[str]:
     )
 
 
-def vip_flags_from_qualification(
-    qualification_category: str,
-    budget_category: str = "",
-) -> Tuple[bool, bool, str]:
-    qc = (qualification_category or "").strip()
-    bc = (budget_category or "").strip()
-    is_vip = qc in ("VIP Pipeline", "Qualified") or bc in _VIP_BUDGET_TIERS
-    is_hni = bc == "5 Cr+"
-    vip_category = "VIP/HNI" if is_vip else ""
-    return is_vip, is_hni, vip_category
+
 
 
 def non_contactable_tag_patch() -> Dict[str, Any]:
@@ -60,9 +50,7 @@ def non_contactable_tag_patch() -> Dict[str, Any]:
     return {
         "temperature": "",
         "qualification_category": "",
-        "is_vip": False,
         "is_hni": False,
-        "vip_category": "",
     }
 
 
@@ -74,8 +62,8 @@ def canonical_lead_tags_from_doc(
     """
     Build $set fields for canonical tags from a lead document (and optional patch overlay).
 
-    - Non-contactable: clear temperature + qualification_category + VIP flags.
-    - Else with match flags: recompute qualification_category, clear temperature, refresh VIP.
+    - Non-contactable: clear temperature + qualification_category.
+    - Else with match flags: recompute qualification_category, clear temperature.
     - Returns empty dict if no match flags and not non-contactable (caller may skip).
     """
     merged = {**lead, **(lead_patch or {})}
@@ -92,16 +80,12 @@ def canonical_lead_tags_from_doc(
         bool(merged.get("area_match")),
         bool(merged.get("timeline_match")),
     )
-    is_vip, is_hni, vip_cat = vip_flags_from_qualification(
-        qc,
-        str(merged.get("budget_category") or ""),
-    )
+    bc = str(merged.get("budget_category") or "")
+    is_hni = bc == "5 Cr+"
     return {
         "qualification_category": qc,
         "temperature": "",
-        "is_vip": is_vip,
         "is_hni": is_hni,
-        "vip_category": vip_cat,
     }
 
 

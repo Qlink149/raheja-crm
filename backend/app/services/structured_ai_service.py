@@ -7,9 +7,8 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from openai import AsyncOpenAI
-
 from ..core.config import settings
+from .llm_router import chat_completion, missing_llm_message
 from ..models.structured_extraction import (
     BatchSummaryObject,
     BatchSummaryPayload,
@@ -20,20 +19,10 @@ from ..models.structured_extraction import (
 from ..utils.csv_processor import get_intent_category
 
 logger = logging.getLogger(__name__)
-_openai_client: Optional[AsyncOpenAI] = None
 
 NOT_WORTHY_MESSAGE = "No meaningful conversation"
 PERSONA_INSUFFICIENT = "Insufficient interaction to determine buyer persona."
 STRATEGIC_INSUFFICIENT = "Insufficient interaction to recommend a strategic next move."
-
-
-def get_openai_client() -> Optional[AsyncOpenAI]:
-    global _openai_client
-    if _openai_client is None:
-        if not settings.OPENAI_API_KEY:
-            return None
-        _openai_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-    return _openai_client
 
 
 def mask_phone(raw: str) -> str:
@@ -64,9 +53,7 @@ _INSIGHT_LEAD_WHITELIST = frozenset(
         "location_category",
         "intent_category",
         "qualification_category",
-        "is_vip",
         "is_hni",
-        "vip_category",
         "current_residence_location",
         "current_residential_location",
         "possession_requirement",
@@ -290,17 +277,15 @@ def not_worthy_call_history_patch(now: Optional[datetime] = None) -> Dict[str, A
 
 
 def qualification_category_from_matches(budget_match: bool, area_match: bool, timeline_match: bool) -> str:
-    if (not budget_match) and (not area_match) and (not timeline_match):
-        return "Dormant"
-    if (not budget_match) and (area_match or timeline_match):
-        return "Cold"
     if budget_match and area_match and timeline_match:
         return "Qualified"
-    if budget_match and area_match and (not timeline_match):
-        return "VIP Pipeline"
-    if budget_match and (not area_match):
+    if budget_match and (area_match or timeline_match):
         return "Hot"
-    return "Cold"
+    if budget_match and not area_match and not timeline_match:
+        return "Warm"
+    if (not budget_match) and (area_match or timeline_match):
+        return "Cold"
+    return "Dormant"
 
 
 def _not_captured_to_db(value: str) -> str:
@@ -507,11 +492,8 @@ class StructuredAIService:
         recording_url: str,
         transcript: str,
     ) -> UnifiedStructuredExtraction:
-        if not settings.OPENAI_API_KEY:
-            raise RuntimeError("OPENAI_API_KEY is not configured")
-        client = get_openai_client()
-        if not client:
-            raise RuntimeError("OpenAI client unavailable")
+        if not settings.llm_configured:
+            raise RuntimeError(missing_llm_message())
 
         messages = self._build_unified_messages(
             customer_name=customer_name,
@@ -520,8 +502,7 @@ class StructuredAIService:
             recording_url=recording_url,
             transcript=transcript,
         )
-        resp = await client.chat.completions.create(
-            model="gpt-4o",
+        resp = await chat_completion(
             messages=messages,
             temperature=0.2,
             max_tokens=1050,
@@ -689,15 +670,11 @@ class StructuredAIService:
             raise ValueError("Lead not found")
         if not refresh and lead.get(field):
             return lead[field]
-        if not settings.OPENAI_API_KEY:
-            return "AI insights require an OpenAI API key. Please configure OPENAI_API_KEY in the backend .env file."
-        client = get_openai_client()
-        if not client:
-            return "AI insights require an OpenAI API key. Please configure OPENAI_API_KEY in the backend .env file."
+        if not settings.llm_configured:
+            return missing_llm_message()
         user_content = _build_insight_user_content(lead, prompt, worthy_call=worthy_call)
         try:
-            response = await client.chat.completions.create(
-                model="gpt-4o",
+            response = await chat_completion(
                 messages=[
                     {
                         "role": "system",
@@ -719,7 +696,7 @@ class StructuredAIService:
             await self.db.leads.update_one({"id": lead_id}, {"$set": {field: insight}})
             return insight
         except Exception as e:
-            logger.error("Error calling OpenAI for lead %s: %s", lead_id, e)
+            logger.error("Error calling LLM for lead %s: %s", lead_id, e)
             return f"Unable to generate AI insight at this time. Error: {str(e)}"
 
     async def generate_persona(self, lead_id: str, refresh: bool = False) -> str:

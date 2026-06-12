@@ -57,7 +57,7 @@ import {
   SelectValue,
 } from "../components/ui/select";
 
-const SALES_QUALIFICATION_OPTIONS = ["Cold Qualified", "Hot Lead", "VIP Pipeline"];
+const SALES_QUALIFICATION_OPTIONS = ["Cold Qualified", "Warm Lead", "Hot Lead"];
 
 const CustomerDetailPage = () => {
   const navigate = useNavigate();
@@ -301,12 +301,7 @@ const CustomerDetailPage = () => {
                 <div className="w-32 h-32 rounded-full bg-gradient-to-br from-[#C5A059] to-[#8A6D3B] flex items-center justify-center text-black text-4xl font-serif mb-4 shadow-xl">
                   {getInitials(lead.full_name)}
                 </div>
-                {lead.vip_category && (
-                  <span className="flex items-center gap-1 px-3 py-1 bg-[#C5A059]/20 text-[#C5A059] border border-[#C5A059]/30 rounded-sm text-sm">
-                    <Crown className="w-4 h-4" />
-                    VIP Client
-                  </span>
-                )}
+
               </div>
 
               {/* Profile Details */}

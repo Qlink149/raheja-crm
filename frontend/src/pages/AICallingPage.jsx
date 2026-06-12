@@ -8,11 +8,8 @@ import {
   PhoneCall,
   Clock,
   User,
-  Play,
-  Pause,
   Filter,
   Search,
-  FileText,
   CheckCircle,
   XCircle,
   AlertCircle,
@@ -24,7 +21,6 @@ import {
 } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
-import { parseCallTranscriptTurns, WHITELABEL_AGENT_LABEL } from "../utils/callTranscript";
 import {
   Select,
   SelectContent,
@@ -32,18 +28,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../components/ui/select";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "../components/ui/dialog";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
+import CallDetailDialog from "../components/CallDetailDialog";
 import { Calendar as CalendarUI } from "../components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "../components/ui/popover";
 import EmptyState from "../components/feedback/EmptyState";
-import { CallTableSkeleton } from "../components/feedback/Skeletons";
+import {
+  CallRowSkeleton,
+  CallStatsSkeleton,
+  CALL_TABLE_GRID_COLS,
+} from "../components/feedback/Skeletons";
+import LoadingOverlay from "../components/loading/LoadingOverlay";
 import { api, campaignsAPI } from "../lib/api";
+import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import {
   buildCallHistoryDateParams,
   formatCallHistoryDateLabel,
@@ -52,6 +48,8 @@ import {
 
 const PAGE_SIZE = 50;
 const ROW_HEIGHT = 64; // px, matches the grid row's effective height
+const VISIBLE_ROWS = 15;
+const LIST_MIN_HEIGHT = ROW_HEIGHT * VISIBLE_ROWS;
 
 // -----------------------------------------------------------------------------
 // Module-scope helpers (pure, never re-allocated per render)
@@ -112,7 +110,7 @@ const CallRow = memo(
     return (
       <div
         style={style}
-        className="grid grid-cols-7 gap-2 px-4 py-3 hover:bg-white/5 cursor-pointer transition-colors duration-200 items-center border-b border-white/5"
+        className={`${CALL_TABLE_GRID_COLS} px-4 py-3 hover:bg-white/5 cursor-pointer transition-colors duration-200 items-center border-b border-white/5`}
         onClick={() => onSelect(call)}
       >
         {/* Customer */}
@@ -131,7 +129,10 @@ const CallRow = memo(
         </span>
 
         {/* Timestamp */}
-        <span className="text-[#A3A3A3] text-sm tabular-nums truncate">
+        <span
+          className="text-[#A3A3A3] text-sm tabular-nums whitespace-nowrap"
+          title={formatDate(call.created_at)}
+        >
           {formatDate(call.created_at)}
         </span>
 
@@ -223,16 +224,23 @@ const StatTile = memo(function StatTile({
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay, duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-      className="glass-card rounded-xl p-6 hover-lift"
-      title={title}
+      className="glass-card rounded-xl p-4 sm:p-5 hover-lift min-w-0 overflow-hidden h-full"
+      title={title || label}
     >
-      <div className="flex items-center gap-3 mb-3">
-        <div className={`p-3 ${t.iconBg} rounded-lg flex-shrink-0`}>
-          <Icon className={`w-5 h-5 ${t.iconColor}`} />
-        </div>
-        <span className={`kicker ${t.labelColor} whitespace-nowrap`}>{label}</span>
+      <div className={`p-2.5 ${t.iconBg} rounded-lg w-fit mb-3 flex-shrink-0`}>
+        <Icon className={`w-5 h-5 ${t.iconColor}`} />
       </div>
-      <p className="text-3xl font-display text-white tabular-nums">{value}</p>
+      <p
+        className={`text-[11px] font-semibold uppercase tracking-wide leading-snug ${t.labelColor} line-clamp-2 break-words`}
+      >
+        {label}
+      </p>
+      <p
+        className="text-2xl sm:text-3xl font-display text-white tabular-nums mt-2 min-w-0 truncate"
+        title={String(value)}
+      >
+        {value}
+      </p>
     </motion.div>
   );
 });
@@ -249,11 +257,12 @@ const AICallingPage = () => {
   const [dispositionOptions, setDispositionOptions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [selectedCampaign, setSelectedCampaign] = useState("all");
   const [selectedCall, setSelectedCall] = useState(null);
   const [showCallDetail, setShowCallDetail] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [debouncedSearch, flushSearch] = useDebouncedValue(searchQuery, 400, { minLength: 2 });
   const [statusFilter, setStatusFilter] = useState("all");
   const [dispositionFilter, setDispositionFilter] = useState(
     searchParams.get("disposition") || "all"
@@ -262,19 +271,12 @@ const AICallingPage = () => {
     searchParams.get("upload_batch_id") || searchParams.get("campaignId") || "all"
   );
   const [uploadBatches, setUploadBatches] = useState([]);
-  const [updatingDisposition, setUpdatingDisposition] = useState(false);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [hasMore, setHasMore] = useState(false);
   const [summary, setSummary] = useState(null);
   const [aiBatchSummary, setAiBatchSummary] = useState(null);
   const [dateRange, setDateRange] = useState(null);
-
-  // Audio player state
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [audioProgress, setAudioProgress] = useState(0);
-  const [audioDuration, setAudioDuration] = useState(0);
-  const audioRef = useRef(null);
 
   // Virtual list scroll container
   const scrollContainerRef = useRef(null);
@@ -286,12 +288,6 @@ const AICallingPage = () => {
     if (q) setSearchQuery(q);
     if (searchParams.get("disposition")) setDispositionFilter(searchParams.get("disposition"));
   }, [searchParams]);
-
-  // -------- Debounced search --------
-  useEffect(() => {
-    const t = setTimeout(() => setDebouncedSearch(searchQuery), 400);
-    return () => clearTimeout(t);
-  }, [searchQuery]);
 
   // -------- Bootstrap filters --------
   useEffect(() => {
@@ -387,14 +383,17 @@ const AICallingPage = () => {
         setPage(1);
         setSummary(sumRes.data || null);
         setAiBatchSummary(aiSumRes.data?.batch_summary || null);
+        setHasLoadedOnce(true);
       } catch (error) {
         console.error("Error fetching call history:", error);
         toast.error("Failed to load call history");
-        setCalls([]);
-        setTotal(0);
-        setHasMore(false);
-        setSummary(null);
-        setAiBatchSummary(null);
+        if (!hasLoadedOnce) {
+          setCalls([]);
+          setTotal(0);
+          setHasMore(false);
+          setSummary(null);
+          setAiBatchSummary(null);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -402,7 +401,10 @@ const AICallingPage = () => {
     return () => {
       cancelled = true;
     };
-  }, [listParams, summaryParams]);
+  }, [listParams, summaryParams, hasLoadedOnce]);
+
+  const isInitialLoading = loading && !hasLoadedOnce;
+  const isRefetching = loading && hasLoadedOnce;
 
   const handleLoadMore = useCallback(async () => {
     if (loadingMore || !hasMore) return;
@@ -422,100 +424,60 @@ const AICallingPage = () => {
     }
   }, [loadingMore, hasMore, page, listParams]);
 
-  // -------- Audio player --------
-  const handlePlayPause = useCallback(() => {
-    if (audioRef.current) {
-      if (isPlaying) audioRef.current.pause();
-      else audioRef.current.play();
-      setIsPlaying(!isPlaying);
-    }
-  }, [isPlaying]);
-
-  const handleTimeUpdate = useCallback(() => {
-    if (audioRef.current) setAudioProgress(audioRef.current.currentTime);
-  }, []);
-
-  const handleLoadedMetadata = useCallback(() => {
-    if (audioRef.current) setAudioDuration(audioRef.current.duration);
-  }, []);
-
-  const handleSeek = useCallback(
-    (e) => {
-      const rect = e.currentTarget.getBoundingClientRect();
-      const percent = (e.clientX - rect.left) / rect.width;
-      if (audioRef.current) audioRef.current.currentTime = percent * audioDuration;
-    },
-    [audioDuration]
-  );
-
   const handleSelectCall = useCallback((call) => {
     setSelectedCall(call);
     setShowCallDetail(true);
-    setIsPlaying(false);
-    setAudioProgress(0);
   }, []);
 
-  const updateDisposition = useCallback(
-    async (call, newDisposition) => {
-      if (!call?.lead_id) return;
-      setUpdatingDisposition(true);
-      try {
-        await api.patch(`/leads/${call.lead_id}/disposition`, {
-          disposition: newDisposition,
-        });
-        toast.success(`Marked as ${newDisposition}`);
-        setCalls((prev) =>
-          prev.map((c) =>
-            c.lead_id === call.lead_id ? { ...c, disposition: newDisposition } : c
-          )
-        );
-        setSelectedCall((prev) =>
-          prev && prev.lead_id === call.lead_id
-            ? { ...prev, disposition: newDisposition }
-            : prev
-        );
-      } catch (err) {
-        toast.error(err?.response?.data?.detail || "Failed to update disposition");
-      } finally {
-        setUpdatingDisposition(false);
-      }
-    },
-    []
-  );
+  const handleDispositionChange = useCallback((call, newDisposition) => {
+    setCalls((prev) =>
+      prev.map((c) =>
+        c.lead_id === call.lead_id ? { ...c, disposition: newDisposition } : c
+      )
+    );
+    setSelectedCall((prev) =>
+      prev && prev.lead_id === call.lead_id
+        ? { ...prev, disposition: newDisposition }
+        : prev
+    );
+  }, []);
 
   // -------- Memoized derived values --------
-  const stats = useMemo(
-    () => ({
-      total: Number(summary?.total_calls ?? total ?? 0),
-      completed: Number(summary?.completed ?? 0),
-      interested: Number(summary?.interested ?? 0),
-      partiallyInterested: Number(summary?.partially_interested ?? 0),
-      avgDuration: Number(summary?.avg_duration_seconds ?? 0),
-    }),
-    [summary, total]
-  );
+  const stats = useMemo(() => {
+    if (!summary) return null;
+    return {
+      total: Number(summary.total_calls ?? total ?? 0),
+      completed: Number(summary.completed ?? 0),
+      interested: Number(summary.interested ?? 0),
+      partiallyInterested: Number(summary.partially_interested ?? 0),
+      avgDuration: Number(summary.avg_duration_seconds ?? 0),
+    };
+  }, [summary, total]);
 
-  const aiStats = useMemo(
-    () => ({
-      total: Number(aiBatchSummary?.total_calls ?? 0),
-      hot: Number(aiBatchSummary?.hot_leads ?? 0),
-      mild: Number(aiBatchSummary?.mildly_interested ?? 0),
-      not: Number(aiBatchSummary?.not_interested ?? 0),
-      voicemail: Number(aiBatchSummary?.voicemail_wrong_number ?? 0),
-      bought: Number(aiBatchSummary?.already_bought ?? 0),
-      incorrect: Number(aiBatchSummary?.system_tags_incorrect ?? 0),
-    }),
-    [aiBatchSummary]
-  );
+  const aiStats = useMemo(() => {
+    if (!aiBatchSummary) return null;
+    return {
+      total: Number(aiBatchSummary.total_calls ?? 0),
+      hot: Number(aiBatchSummary.hot_leads ?? 0),
+      mild: Number(aiBatchSummary.mildly_interested ?? 0),
+      not: Number(aiBatchSummary.not_interested ?? 0),
+      voicemail: Number(aiBatchSummary.voicemail_wrong_number ?? 0),
+      bought: Number(aiBatchSummary.already_bought ?? 0),
+      incorrect: Number(aiBatchSummary.system_tags_incorrect ?? 0),
+    };
+  }, [aiBatchSummary]);
 
   const aiBuckets = useMemo(
-    () => [
-      { label: "Hot", value: aiStats.hot },
-      { label: "Mild", value: aiStats.mild },
-      { label: "Not Interested", value: aiStats.not },
-      { label: "Voicemail/Wrong #", value: aiStats.voicemail },
-      { label: "Already Bought", value: aiStats.bought },
-    ],
+    () =>
+      aiStats
+        ? [
+            { label: "Hot", value: aiStats.hot },
+            { label: "Mild", value: aiStats.mild },
+            { label: "Not Interested", value: aiStats.not },
+            { label: "Voicemail/Wrong #", value: aiStats.voicemail },
+            { label: "Already Bought", value: aiStats.bought },
+          ]
+        : [],
     [aiStats]
   );
 
@@ -573,44 +535,46 @@ const AICallingPage = () => {
           </p>
         </motion.div>
 
-        {loading ? (
-          <CallTableSkeleton />
-        ) : (
-          <>
+        <>
             {/* Stats Cards */}
-            <div className="glass-card rounded-lg p-4 mb-8">
-            <motion.div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-              <StatTile icon={PhoneCall} label="Total Calls" value={stats.total} tone="gold" />
-              <StatTile
-                icon={CheckCircle}
-                label="Completed"
-                value={stats.completed}
-                tone="emerald"
-                delay={0.05}
-              />
-              <StatTile
-                icon={User}
-                label="Interested"
-                value={stats.interested}
-                tone="blue"
-                delay={0.1}
-              />
-              <StatTile
-                icon={Sparkles}
-                label="Partially Interested"
-                value={stats.partiallyInterested}
-                tone="cyan"
-                delay={0.15}
-              />
-              <StatTile
-                icon={Clock}
-                label="Avg Connected Duration"
-                value={formatDuration(stats.avgDuration)}
-                tone="purple"
-                delay={0.2}
-                title="Average talk time for calls with duration greater than 0"
-              />
-            </motion.div>
+            <div className="relative glass-card rounded-lg p-4 mb-8">
+              {isInitialLoading ? (
+                <CallStatsSkeleton />
+              ) : stats ? (
+                <motion.div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3 sm:gap-4">
+                  <StatTile icon={PhoneCall} label="Total Calls" value={stats.total} tone="gold" />
+                  <StatTile
+                    icon={CheckCircle}
+                    label="Completed"
+                    value={stats.completed}
+                    tone="emerald"
+                    delay={0.05}
+                  />
+                  <StatTile
+                    icon={User}
+                    label="Interested"
+                    value={stats.interested}
+                    tone="blue"
+                    delay={0.1}
+                  />
+                  <StatTile
+                    icon={Sparkles}
+                    label="Partially Interested"
+                    value={stats.partiallyInterested}
+                    tone="cyan"
+                    delay={0.15}
+                  />
+                  <StatTile
+                    icon={Clock}
+                    label="Avg Connected Duration"
+                    value={formatDuration(stats.avgDuration)}
+                    tone="purple"
+                    delay={0.2}
+                    title="Average talk time for calls with duration greater than 0"
+                  />
+                </motion.div>
+              ) : null}
+              <LoadingOverlay show={isRefetching} />
             </div>
 
             {/* Batch Summary (AI Structured Extraction) */}
@@ -618,40 +582,60 @@ const AICallingPage = () => {
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-              className="glass-card rounded-xl p-5 mb-6"
+              className="relative glass-card rounded-xl p-5 mb-6"
             >
               <div className="flex items-center justify-between gap-4 flex-wrap">
                 <div>
                   <h2 className="kicker">Batch Summary (AI Validated)</h2>
                   <p className="text-xs text-[#A3A3A3] mt-1.5">
                     Based on structured extraction from transcripts.{" "}
-                    {aiStats.total
-                      ? `${aiStats.total} calls analyzed.`
-                      : "No AI extractions yet for these filters."}
+                    {isInitialLoading
+                      ? "Loading analysis…"
+                      : aiStats?.total
+                        ? `${aiStats.total} calls analyzed.`
+                        : "No AI extractions yet for these filters."}
                   </p>
                 </div>
-                {aiStats.incorrect > 0 && (
+                {aiStats && aiStats.incorrect > 0 && (
                   <span className="text-xs px-2 py-1 rounded border border-red-500/30 bg-red-900/20 text-red-300">
                     {aiStats.incorrect} system tags incorrect
                   </span>
                 )}
               </div>
 
-              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3 mt-4">
-                {aiBuckets.map((x) => (
-                  <div
-                    key={x.label}
-                    className="rounded-lg border border-white/10 bg-white/5 p-3 transition-colors duration-300 hover:border-[#C5A059]/30"
-                  >
-                    <p className="text-[10px] uppercase tracking-widest text-[#737373]">
-                      {x.label}
-                    </p>
-                    <p className="text-xl font-display text-white tabular-nums mt-1">
-                      {x.value}
-                    </p>
-                  </div>
-                ))}
-              </div>
+              {isInitialLoading ? (
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mt-4">
+                  {Array.from({ length: 5 }).map((_, i) => (
+                    <div key={i} className="rounded-lg border border-white/10 bg-white/5 p-3">
+                      <div className="skeleton-block h-3 w-16 rounded mb-2" />
+                      <div className="skeleton-block h-7 w-10 rounded" />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mt-4">
+                  {aiBuckets.map((x) => (
+                    <div
+                      key={x.label}
+                      className="rounded-lg border border-white/10 bg-white/5 p-3 transition-colors duration-300 hover:border-[#C5A059]/30 min-w-0 overflow-hidden"
+                    >
+                      <p
+                        className="text-[11px] uppercase tracking-wide text-[#737373] leading-snug break-words line-clamp-2"
+                        title={x.label}
+                      >
+                        {x.label}
+                      </p>
+                      <p
+                        className="text-xl font-display text-white tabular-nums mt-1.5 min-w-0"
+                        title={String(x.value)}
+                      >
+                        {x.value}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <LoadingOverlay show={isRefetching} />
 
               {Array.isArray(aiBatchSummary?.top_priority_leads) &&
                 aiBatchSummary.top_priority_leads.length > 0 && (
@@ -793,6 +777,7 @@ const AICallingPage = () => {
                     placeholder="Search by name or phone..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && flushSearch()}
                     className="pl-10 bg-[#1A1A1A] border-white/10 text-white placeholder:text-[#525252] focus-visible:ring-[#C5A059]/40 focus-visible:border-[#C5A059]/40"
                   />
                 </div>
@@ -804,7 +789,7 @@ const AICallingPage = () => {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ duration: 0.3 }}
-              className="glass-card rounded-xl overflow-hidden"
+              className="relative glass-card rounded-xl overflow-hidden"
             >
               <div className="p-4 border-b border-white/10 flex items-center justify-between">
                 <div>
@@ -812,8 +797,16 @@ const AICallingPage = () => {
                     Call History
                   </h2>
                   <p className="text-sm text-[#A3A3A3]">
-                    <span className="tabular-nums">{total.toLocaleString()}</span> calls
+                    {hasLoadedOnce ? (
+                      <span className="tabular-nums">{total.toLocaleString()}</span>
+                    ) : (
+                      <span className="text-[#737373]">—</span>
+                    )}{" "}
+                    calls
                     found
+                    {isRefetching && (
+                      <span className="text-[#C5A059] ml-1">(refreshing…)</span>
+                    )}
                     {calls.length < total ? (
                       <span className="text-[#737373]">
                         {" "}
@@ -828,61 +821,79 @@ const AICallingPage = () => {
                 </div>
               </div>
 
-              {/* Header row */}
-              <div className="grid grid-cols-7 gap-2 px-4 py-3 bg-[#141414] border-b border-white/10">
-                {["Customer", "Phone", "Timestamp", "Duration", "Disposition", "Status", "Action"].map(
-                  (h) => (
-                    <span
-                      key={h}
-                      className="text-[11px] uppercase tracking-widest text-[#C5A059] font-semibold"
-                    >
-                      {h}
-                    </span>
-                  )
-                )}
-              </div>
-
-              {/* Virtualized rows */}
-              {calls.length === 0 ? (
-                <EmptyState
-                  icon={PhoneOff}
-                  title="No calls match these filters"
-                  description="Adjust filters or wait for the next live batch."
-                  action={{ label: "Reset filters", onClick: handleResetFilters }}
-                />
-              ) : (
-                <div
-                  ref={scrollContainerRef}
-                  className="overflow-y-auto scrollbar-luxe"
-                  style={{ height: 500 }}
-                >
-                  <div
-                    style={{
-                      height: `${totalSize}px`,
-                      width: "100%",
-                      position: "relative",
-                    }}
-                  >
-                    {virtualItems.map((virtualRow) => {
-                      const call = calls[virtualRow.index];
-                      return (
-                        <CallRow
-                          key={call.id ? `${call.id}-${virtualRow.index}` : `idx-${virtualRow.index}`}
-                          call={call}
-                          onSelect={handleSelectCall}
-                          style={{
-                            position: "absolute",
-                            top: 0,
-                            left: 0,
-                            width: "100%",
-                            transform: `translateY(${virtualRow.start}px)`,
-                          }}
-                        />
-                      );
-                    })}
+              <div className="overflow-x-auto">
+                <div className="min-w-[1020px]">
+                  {/* Header row */}
+                  <div className={`${CALL_TABLE_GRID_COLS} px-4 py-3 bg-[#141414] border-b border-white/10`}>
+                    {["Customer", "Phone", "Timestamp", "Duration", "Disposition", "Status", "Action"].map(
+                      (h) => (
+                        <span
+                          key={h}
+                          className="text-[11px] uppercase tracking-widest text-[#C5A059] font-semibold"
+                        >
+                          {h}
+                        </span>
+                      )
+                    )}
                   </div>
+
+                  {isInitialLoading ? (
+                    <div>
+                      {Array.from({ length: 8 }).map((_, i) => (
+                        <CallRowSkeleton key={i} />
+                      ))}
+                    </div>
+                  ) : calls.length === 0 ? (
+                    <EmptyState
+                      icon={PhoneOff}
+                      title="No calls match these filters"
+                      description="Adjust filters or wait for the next live batch."
+                      action={{ label: "Reset filters", onClick: handleResetFilters }}
+                    />
+                  ) : (
+                    <div className="relative">
+                      <div
+                        ref={scrollContainerRef}
+                        className="overflow-y-auto scrollbar-luxe"
+                        style={{
+                          height: `max(${LIST_MIN_HEIGHT}px, calc(100vh - 240px))`,
+                        }}
+                      >
+                        <div
+                          style={{
+                            height: `${totalSize}px`,
+                            width: "100%",
+                            position: "relative",
+                          }}
+                        >
+                          {virtualItems.map((virtualRow) => {
+                            const call = calls[virtualRow.index];
+                            return (
+                              <CallRow
+                                key={
+                                  call.id
+                                    ? `${call.id}-${virtualRow.index}`
+                                    : `idx-${virtualRow.index}`
+                                }
+                                call={call}
+                                onSelect={handleSelectCall}
+                                style={{
+                                  position: "absolute",
+                                  top: 0,
+                                  left: 0,
+                                  width: "100%",
+                                  transform: `translateY(${virtualRow.start}px)`,
+                                }}
+                              />
+                            );
+                          })}
+                        </div>
+                      </div>
+                      <LoadingOverlay show={isRefetching} />
+                    </div>
+                  )}
                 </div>
-              )}
+              </div>
 
               {calls.length > 0 && hasMore && (
                 <div className="p-4 flex justify-center border-t border-white/10">
@@ -898,280 +909,14 @@ const AICallingPage = () => {
                 </div>
               )}
             </motion.div>
-          </>
-        )}
+        </>
 
-        {/* Call Detail Dialog — restructured for proper containment */}
-        <Dialog open={showCallDetail} onOpenChange={setShowCallDetail}>
-          <DialogContent className="surface-elevated text-white max-w-3xl w-[calc(100vw-2rem)] h-[min(90vh,820px)] p-0 overflow-hidden flex flex-col gap-0">
-            {/* Fixed header */}
-            <DialogHeader className="px-6 pt-6 pb-4 border-b border-white/10 flex-shrink-0">
-              <DialogTitle className="text-white flex items-center gap-3 text-base">
-                <PhoneCall className="w-5 h-5 text-[#C5A059]" />
-                <span>Call Details</span>
-                <span className="text-[#A3A3A3] text-sm font-normal truncate">
-                  · {selectedCall?.customer_name || "Unknown"}
-                </span>
-              </DialogTitle>
-            </DialogHeader>
-
-            {/* Single primary scroll body */}
-            {selectedCall && (
-              <div className="flex-1 min-h-0 overflow-y-auto scrollbar-luxe px-6 py-5 space-y-6">
-                {/* Call Summary */}
-                <div className="bg-white/5 rounded-lg p-4 border border-white/10">
-                  <h3 className="kicker mb-4 flex items-center gap-2">
-                    <Phone className="w-4 h-4" />
-                    Call Summary
-                  </h3>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <div className="min-w-0">
-                      <p className="text-xs text-[#525252] mb-1">Status</p>
-                      <span
-                        className={`px-2 py-1 rounded text-xs inline-flex items-center gap-1 ${getStatusBadge(
-                          selectedCall.status
-                        )}`}
-                      >
-                        <StatusIcon status={selectedCall.status} />
-                        <span className="capitalize">{selectedCall.status}</span>
-                      </span>
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-xs text-[#525252] mb-1">Duration</p>
-                      <p className="text-[#C5A059] font-medium tabular-nums">
-                        {formatDuration(selectedCall.duration)}
-                      </p>
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-xs text-[#525252] mb-1">Disposition</p>
-                      {selectedCall.disposition ? (
-                        <span
-                          className={`px-2 py-1 rounded text-xs border inline-block truncate max-w-full ${getDispositionBadge(
-                            selectedCall.disposition
-                          )}`}
-                        >
-                          {selectedCall.disposition}
-                        </span>
-                      ) : (
-                        <p className="text-[#A3A3A3]">N/A</p>
-                      )}
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-xs text-[#525252] mb-1">Call Date</p>
-                      <p className="text-white text-sm tabular-nums truncate">
-                        {formatDate(selectedCall.created_at)}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Disposition quick-toggle */}
-                  <div className="mt-4 pt-4 border-t border-white/10 flex flex-wrap items-center gap-2">
-                    <span className="text-xs uppercase tracking-wider text-[#525252] mr-2">
-                      Re-classify Lead:
-                    </span>
-                    <Button
-                      data-testid="mark-interested-btn"
-                      size="sm"
-                      disabled={
-                        selectedCall.disposition === "Interested" ||
-                        updatingDisposition
-                      }
-                      onClick={() => updateDisposition(selectedCall, "Interested")}
-                      className="bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-40 btn-tactile"
-                    >
-                      {updatingDisposition ? "..." : "Mark Interested"}
-                    </Button>
-                    <Button
-                      data-testid="mark-not-interested-btn"
-                      size="sm"
-                      disabled={
-                        selectedCall.disposition === "Not Interested" ||
-                        updatingDisposition
-                      }
-                      onClick={() => updateDisposition(selectedCall, "Not Interested")}
-                      className="bg-red-700 hover:bg-red-600 text-white disabled:opacity-40 btn-tactile"
-                    >
-                      {updatingDisposition ? "..." : "Mark Not Interested"}
-                    </Button>
-                  </div>
-                </div>
-
-                {/* Audio Player */}
-                {selectedCall.recording_url && (
-                  <div className="bg-white/5 rounded-lg p-4 border border-white/10">
-                    <h3 className="kicker mb-4 flex items-center gap-2">
-                      <Play className="w-4 h-4" />
-                      Call Recording
-                    </h3>
-                    <div className="flex items-center gap-4">
-                      <Button
-                        size="icon"
-                        onClick={handlePlayPause}
-                        className="w-12 h-12 rounded-full bg-[#C5A059] hover:bg-[#E5C585] text-black btn-tactile flex-shrink-0"
-                      >
-                        {isPlaying ? (
-                          <Pause className="w-5 h-5" />
-                        ) : (
-                          <Play className="w-5 h-5 ml-1" />
-                        )}
-                      </Button>
-
-                      <div className="flex-1 min-w-0">
-                        <div
-                          className="h-2 bg-white/10 rounded-full cursor-pointer relative overflow-hidden"
-                          onClick={handleSeek}
-                        >
-                          <div
-                            className="absolute inset-y-0 left-0 bg-gradient-to-r from-[#C5A059] to-[#E5C585] rounded-full transition-all duration-150"
-                            style={{
-                              width: `${(audioProgress / audioDuration) * 100 || 0}%`,
-                            }}
-                          />
-                        </div>
-                        <div className="flex justify-between mt-1">
-                          <span className="text-xs text-[#A3A3A3] tabular-nums">
-                            {formatDuration(Math.floor(audioProgress))}
-                          </span>
-                          <span className="text-xs text-[#A3A3A3] tabular-nums">
-                            {formatDuration(Math.floor(audioDuration))}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <audio
-                      ref={audioRef}
-                      src={selectedCall.recording_url}
-                      onTimeUpdate={handleTimeUpdate}
-                      onLoadedMetadata={handleLoadedMetadata}
-                      onEnded={() => setIsPlaying(false)}
-                    />
-                  </div>
-                )}
-
-                {/* Tabs for Details and Transcript */}
-                <Tabs defaultValue="details" className="w-full flex flex-col min-h-0">
-                  <TabsList className="bg-white/5 border border-white/10 flex-shrink-0">
-                    <TabsTrigger
-                      value="details"
-                      className="data-[state=active]:bg-[#C5A059] data-[state=active]:text-black transition-all duration-300"
-                    >
-                      Details
-                    </TabsTrigger>
-                    <TabsTrigger
-                      value="transcript"
-                      className="data-[state=active]:bg-[#C5A059] data-[state=active]:text-black transition-all duration-300"
-                    >
-                      Transcript
-                    </TabsTrigger>
-                  </TabsList>
-
-                  <TabsContent value="details" className="mt-4">
-                    <div className="bg-white/5 rounded-lg p-4 border border-white/10">
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="min-w-0">
-                          <p className="text-xs text-[#525252] mb-1">Phone Number</p>
-                          <p className="text-white font-mono tabular-nums truncate">
-                            {selectedCall.phone || "N/A"}
-                          </p>
-                        </div>
-                        <div className="min-w-0">
-                          <p className="text-xs text-[#525252] mb-1">Customer Name</p>
-                          <p className="text-white truncate">
-                            {selectedCall.customer_name || "Unknown"}
-                          </p>
-                        </div>
-                        <div className="min-w-0">
-                          <p className="text-xs text-[#525252] mb-1">Lead ID</p>
-                          <p className="text-white font-mono text-sm truncate">
-                            {selectedCall.lead_id || "N/A"}
-                          </p>
-                          {!selectedCall.lead_id && selectedCall.phone ? (
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className="mt-2 border-[#C5A059]/40 text-[#C5A059] hover:bg-[#C5A059]/10"
-                              onClick={() => {
-                                const q = new URLSearchParams({
-                                  search: selectedCall.phone,
-                                  futwork_sync_status: "all",
-                                });
-                                navigate(`/virtual-customer?${q.toString()}`);
-                              }}
-                            >
-                              Find in Virtual Customer
-                            </Button>
-                          ) : null}
-                        </div>
-                        <div className="min-w-0">
-                          <p className="text-xs text-[#525252] mb-1">Campaign</p>
-                          <p className="text-white truncate">
-                            {selectedCall.campaign || "N/A"}
-                          </p>
-                        </div>
-                        <div className="min-w-0">
-                          <p className="text-xs text-[#525252] mb-1">Direction</p>
-                          <p className="text-white capitalize">
-                            {selectedCall.direction || "Outbound"}
-                          </p>
-                        </div>
-                        <div className="min-w-0">
-                          <p className="text-xs text-[#525252] mb-1">Hangup By</p>
-                          <p className="text-white capitalize">
-                            {selectedCall.hangup_by || "N/A"}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  </TabsContent>
-
-                  <TabsContent value="transcript" className="mt-4">
-                    <motion.div className="bg-white/5 rounded-lg p-4 border border-white/10 flex flex-col">
-                      <h4 className="kicker mb-4 flex flex-shrink-0 items-center gap-2">
-                        <FileText className="w-4 h-4" />
-                        Call Transcript
-                      </h4>
-                      {selectedCall.transcript ? (
-                        <motion.div className="max-h-[55vh] min-h-[200px] overflow-y-auto pr-1 scrollbar-luxe">
-                          <motion.div className="flex flex-col gap-3 w-full pr-2">
-                            {parseCallTranscriptTurns(selectedCall.transcript).map((turn, idx) => (
-                              <motion.div
-                                key={`${idx}-${turn.isUser ? "c" : "a"}-${turn.text.slice(0, 40)}`}
-                                className={`flex w-full shrink-0 ${
-                                  turn.isUser ? "justify-end" : "justify-start"
-                                }`}
-                              >
-                                <motion.div
-                                  className={`max-w-[85%] rounded-lg px-4 py-2 overflow-hidden ${
-                                    turn.isUser
-                                      ? "bg-white/10 text-white"
-                                      : "bg-[#C5A059]/15 text-[#F2D9A8] border border-[#C5A059]/20"
-                                  }`}
-                                >
-                                  <p className="text-xs mb-1 opacity-70">
-                                    {turn.isUser ? "Customer" : WHITELABEL_AGENT_LABEL}
-                                  </p>
-                                  <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
-                                    {turn.text}
-                                  </p>
-                                </motion.div>
-                              </motion.div>
-                            ))}
-                          </motion.div>
-                        </motion.div>
-                      ) : (
-                        <p className="text-[#A3A3A3] text-center py-8">
-                          No transcript available for this call
-                        </p>
-                      )}
-                    </motion.div>
-                  </TabsContent>
-                </Tabs>
-              </div>
-            )}
-          </DialogContent>
-        </Dialog>
+        <CallDetailDialog
+          open={showCallDetail}
+          onOpenChange={setShowCallDetail}
+          call={selectedCall}
+          onDispositionChange={handleDispositionChange}
+        />
     </motion.div>
   );
 };

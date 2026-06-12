@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import { marketingAPI } from "../lib/api";
 import { toast } from "sonner";
 import {
@@ -8,7 +8,6 @@ import {
   Users,
   Target,
   Plus,
-  X,
   Trash2,
   BarChart3,
   PieChart as PieChartIcon,
@@ -27,6 +26,14 @@ import {
   Cell,
 } from "recharts";
 import { Button } from "../components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "../components/ui/dialog";
+import { KpiTileSkeleton } from "../components/feedback/Skeletons";
+import { FetchError, LoadingButton } from "../components/loading";
 
 const CHANNEL_OPTIONS = [
   { value: "meta_ads", label: "Meta Ads (Facebook/Instagram)" },
@@ -59,6 +66,8 @@ const formatCurrency = (n) => {
 const MarketingDashboardPage = () => {
   const [dashData, setDashData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [saving, setSaving] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
   const [projectFilter, setProjectFilter] = useState("all");
   const [form, setForm] = useState({
@@ -79,11 +88,14 @@ const MarketingDashboardPage = () => {
   }, []);
 
   const fetchData = async () => {
+    setLoading(true);
+    setError(null);
     try {
       const res = await marketingAPI.getDashboard();
       setDashData(res.data);
-    } catch {
+    } catch (err) {
       toast.error("Failed to load marketing data");
+      setError(err);
     } finally {
       setLoading(false);
     }
@@ -94,6 +106,7 @@ const MarketingDashboardPage = () => {
       toast.error("Project and amount are required");
       return;
     }
+    setSaving(true);
     try {
       await marketingAPI.addSpend({
         ...form,
@@ -120,6 +133,8 @@ const MarketingDashboardPage = () => {
       fetchData();
     } catch {
       toast.error("Failed to add entry");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -163,20 +178,42 @@ const MarketingDashboardPage = () => {
     }));
   }, [dashData]);
 
-  if (loading) {
+  if (loading && !dashData) {
     return (
-      <motion.div className="flex items-center justify-center min-h-[60vh]">
-        <motion.p className="text-[#C5A059] animate-pulse text-lg">Loading marketing data...</motion.p>
+      <motion.div className="space-y-6" data-testid="marketing-dashboard">
+        <motion.div className="h-10 w-72 rounded bg-white/5 animate-pulse" />
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          {[0, 1, 2, 3].map((i) => (
+            <KpiTileSkeleton key={i} />
+          ))}
+        </div>
       </motion.div>
     );
   }
 
-  const totalSpend = dashData?.total_spend || 0;
-  const totalLeads = dashData?.total_leads || 0;
-  const totalConversions = dashData?.total_conversions || 0;
-  const avgCPL = dashData?.avg_cost_per_lead ?? (totalLeads > 0 ? Math.round(totalSpend / totalLeads) : 0);
-  const roiPercent = dashData?.roi_percent ?? 0;
-  const hasData = (dashData?.entries || []).length > 0;
+  if (!dashData) {
+    return (
+      <motion.div className="space-y-6" data-testid="marketing-dashboard">
+        <motion.div>
+          <h1 className="text-2xl sm:text-3xl font-semibold text-white tracking-tight" data-testid="marketing-title">
+            Marketing <span className="text-[#C5A059]">Dashboard</span>
+          </h1>
+        </motion.div>
+        <FetchError
+          title="Marketing dashboard unavailable"
+          message="We couldn't load marketing data. Check your connection and try again."
+          onRetry={fetchData}
+        />
+      </motion.div>
+    );
+  }
+
+  const totalSpend = dashData.total_spend || 0;
+  const totalLeads = dashData.total_leads || 0;
+  const totalConversions = dashData.total_conversions || 0;
+  const avgCPL = dashData.avg_cost_per_lead ?? (totalLeads > 0 ? Math.round(totalSpend / totalLeads) : 0);
+  const roiPercent = dashData.roi_percent ?? 0;
+  const hasData = (dashData.entries || []).length > 0;
 
   const CustomTooltip = ({ active, payload, label }) => {
     if (active && payload?.length) {
@@ -422,29 +459,14 @@ const MarketingDashboardPage = () => {
         </motion.div>
       )}
 
-      <AnimatePresence>
-        {showAddForm && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
-            onClick={() => setShowAddForm(false)}
-          >
-            <motion.div
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-[#1A1A1A] border border-white/10 rounded-xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto"
-              onClick={(e) => e.stopPropagation()}
-              data-testid="add-spend-modal"
-            >
-              <motion.div className="flex items-center justify-between mb-5">
-                <h3 className="text-white font-semibold">Add Marketing Spend</h3>
-                <button type="button" onClick={() => setShowAddForm(false)} className="text-[#52525B] hover:text-white">
-                  <X size={20} />
-                </button>
-              </motion.div>
+      <Dialog open={showAddForm} onOpenChange={setShowAddForm}>
+        <DialogContent
+          className="bg-[#1A1A1A] border-white/10 text-white max-w-lg max-h-[90vh] overflow-y-auto"
+          data-testid="add-spend-modal"
+        >
+          <DialogHeader className="mb-5">
+            <DialogTitle className="text-white font-semibold">Add Marketing Spend</DialogTitle>
+          </DialogHeader>
               <motion.div className="space-y-4">
                 <motion.div className="grid grid-cols-2 gap-3">
                   <motion.div>
@@ -509,17 +531,17 @@ const MarketingDashboardPage = () => {
                     className="w-full bg-[#0F0F0F] border border-white/10 rounded-lg px-3 py-2.5 text-white text-sm focus:border-[#C5A059]/50 focus:outline-none"
                   />
                 </motion.div>
-                <Button
+                <LoadingButton
                   onClick={handleSubmit}
+                  loading={saving}
+                  loadingLabel="Saving..."
                   className="w-full bg-[#C5A059] hover:bg-[#B08D3E] text-black font-medium"
                 >
                   Add Spend Entry
-                </Button>
+                </LoadingButton>
               </motion.div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+        </DialogContent>
+      </Dialog>
     </motion.div>
   );
 };

@@ -10,7 +10,6 @@ class DashboardStats(BaseModel):
     site_visits_scheduled: int
     lost_leads: int
     dormant_leads: int
-    vip_pipeline: int = 0
     qualified_leads: int = 0
     lead_status_stats: Dict[str, int]
     lead_source_stats: Dict[str, int]

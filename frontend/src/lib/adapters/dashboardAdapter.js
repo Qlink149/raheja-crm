@@ -128,7 +128,7 @@ export const DASHBOARD_BUCKET_LABELS = {
   dormant: "Dormant Leads",
   hot: "Hot Leads",
   qualified: "Qualified Leads",
-  vip_pipeline: "VIP Pipeline",
+  warm: "Warm Leads",
 };
 
 export function buildStatsParams(timeFilter, projectFilter, dateRange) {

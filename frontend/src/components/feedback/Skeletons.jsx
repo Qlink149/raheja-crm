@@ -106,8 +106,11 @@ export const LeadGridSkeleton = ({ count = 9 }) => (
 );
 
 /* ---------- Call row (AI Calling table) ---------- */
+export const CALL_TABLE_GRID_COLS =
+  "grid gap-2 [grid-template-columns:minmax(0,1.3fr)_minmax(0,1fr)_minmax(11.5rem,1.5fr)_minmax(3.5rem,0.5fr)_minmax(0,1fr)_minmax(0,0.9fr)_auto]";
+
 export const CallRowSkeleton = () => (
-  <div className="grid grid-cols-7 gap-2 px-4 py-4 items-center border-b border-white/5">
+  <div className={`${CALL_TABLE_GRID_COLS} px-4 py-4 items-center border-b border-white/5`}>
     <div className="flex items-center gap-3 min-w-0">
       <Bar className="w-8 h-8 rounded-full flex-shrink-0" />
       <Bar className="w-24 h-3 rounded" />
@@ -151,7 +154,7 @@ export const CallTableSkeleton = ({ rows = 8 }) => (
         <Bar className="w-32 h-4 rounded mb-2" />
         <Bar className="w-48 h-3 rounded" />
       </div>
-      <div className="grid grid-cols-7 gap-2 px-4 py-3 bg-[#1A1A1A] border-b border-white/10">
+      <div className={`${CALL_TABLE_GRID_COLS} px-4 py-3 bg-[#1A1A1A] border-b border-white/10`}>
         {Array.from({ length: 7 }).map((_, i) => (
           <Bar key={i} className="h-3 rounded" />
         ))}

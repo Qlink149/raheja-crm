@@ -338,14 +338,7 @@ def process_row_to_lead(row: Dict[str, Any]) -> Dict[str, Any]:
     lead["baseline_uploaded_at"] = datetime.utcnow()
 
     # Derived flags
-    lead['is_vip'] = (
-        lead.get('temperature') == 'Hot' or
-        lead.get('budget_category') in ('5 Cr+', '2-5 Cr')
-    )
     lead['is_hni'] = lead.get('budget_category') == '5 Cr+'
-
-    # vip_category — used by frontend for crown icon rendering
-    lead['vip_category'] = "VIP/HNI" if lead['is_vip'] else ""
 
     # Metadata
     lead['updated_at'] = datetime.utcnow()

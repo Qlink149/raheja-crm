@@ -17,6 +17,7 @@ from ...core.security import get_current_user
 from ...core.time_utils import iso_utc_now, utc_now
 
 from ...services.assignment_service import rep_lead_filter
+from ...services.notification_service import sanitize_notification_text
 
 
 
@@ -115,6 +116,25 @@ def _merge_scope(base: Dict[str, Any], scope: Optional[Dict[str, Any]]) -> Dict[
     return {"$and": [base, scope]}
 
 
+def _unread_filter() -> Dict[str, Any]:
+    return {
+        "$or": [
+            {"is_read": False},
+            {"is_read": {"$exists": False}},
+            {"is_read": None},
+        ]
+    }
+
+
+def _recipient_scope_filter(current_user: dict) -> List[Dict[str, Any]]:
+    return [
+        {"recipient_user_id": current_user["id"]},
+        {"recipient_user_id": {"$exists": False}},
+        {"recipient_user_id": None},
+        {"recipient_user_id": ""},
+    ]
+
+
 
 
 
@@ -210,10 +230,6 @@ async def _build_auto_notifications(
 
                     {"temperature": {"$regex": r"^hot$", "$options": "i"}},
 
-                    {"qualification_category": {"$regex": r"vip\s*pipeline", "$options": "i"}},
-
-                    {"is_vip": True},
-
                 ]
 
             },
@@ -222,7 +238,7 @@ async def _build_auto_notifications(
 
     }
 
-    hot_vip_leads = await db.leads.find(
+    hot_leads = await db.leads.find(
 
         _merge_scope(hot_base, scope),
 
@@ -230,7 +246,7 @@ async def _build_auto_notifications(
 
     ).to_list(30)
 
-    for lead in hot_vip_leads:
+    for lead in hot_leads:
 
         name = lead.get("full_name") or f"{lead.get('first_name', '')} {lead.get('last_name', '')}".strip()
 
@@ -240,9 +256,9 @@ async def _build_auto_notifications(
 
                 "id": f"auto-hot-{lead['id']}",
 
-                "type": "hot_vip_lead",
+                "type": "hot_lead",
 
-                "title": "Hot / VIP Lead Alert",
+                "title": "Hot Lead Alert",
 
                 "message": f"{name} is a high-priority lead — follow up within 48 hours",
 
@@ -542,7 +558,9 @@ async def _build_auto_notifications(
 
         )
 
-
+    for n in auto:
+        n["title"] = sanitize_notification_text(n.get("title", ""))
+        n["message"] = sanitize_notification_text(n.get("message", ""))
 
     return auto
 
@@ -565,16 +583,16 @@ async def get_notifications(
     query: Dict[str, Any] = _stored_notifications_query(current_user)
 
     if unread_only:
-
-        query = {"$and": [query, {"is_read": False}]} if query else {"is_read": False}
-
-
+        unread = _unread_filter()
+        query = {"$and": [query, unread]} if query else unread
 
     stored = await db.notifications.find(query, {"_id": 0}).sort("created_at", -1).to_list(200)
 
-
-
-    dismissed = set(current_user.get("notification_dismissals") or [])
+    user_row = await db.users.find_one(
+        {"id": current_user["id"]},
+        {"_id": 0, "notification_dismissals": 1},
+    ) or {}
+    dismissed = set(user_row.get("notification_dismissals") or [])
 
     auto_notifications = [
 
@@ -598,130 +616,73 @@ async def get_notifications(
 
 
 
-@router.put("/{notification_id}/read")
-
-async def mark_notification_read(
-
-    notification_id: str,
-
-    current_user: dict = Depends(get_current_user),
-
-    db=Depends(get_db),
-
-):
-
-    if notification_id.startswith("auto-"):
-
-        uid = current_user["id"]
-
-        user = await db.users.find_one({"id": uid}, {"_id": 0, "notification_dismissals": 1}) or {}
-
-        cur = list(user.get("notification_dismissals") or [])
-
-        if notification_id not in cur:
-
-            cur.append(notification_id)
-
-            cur = cur[-_MAX_DISMISSALS:]
-
-            await db.users.update_one({"id": uid}, {"$set": {"notification_dismissals": cur}})
-
-        return {"message": "Notification marked as read"}
-
-
-
-    role = (current_user.get("role") or "sales").lower()
-
-    filt: Dict[str, Any] = {"id": notification_id}
-
-    if role != "admin":
-
-        filt["$or"] = [
-
-            {"recipient_user_id": current_user["id"]},
-
-            {"recipient_user_id": {"$exists": False}},
-
-            {"recipient_user_id": None},
-
-            {"recipient_user_id": ""},
-
-        ]
-
-    await db.notifications.update_one(filt, {"$set": {"is_read": True}})
-
-    return {"message": "Notification marked as read"}
-
-
-
-
-
 @router.put("/read-all")
-
 async def mark_all_notifications_read(
-
     current_user: dict = Depends(get_current_user),
-
     db=Depends(get_db),
-
 ):
-
     uid = current_user["id"]
-
     auto_ids = [n["id"] for n in await _build_auto_notifications(db, current_user)]
-
     user = await db.users.find_one({"id": uid}, {"_id": 0, "notification_dismissals": 1}) or {}
-
     merged = list(dict.fromkeys((user.get("notification_dismissals") or []) + auto_ids))[-_MAX_DISMISSALS:]
-
     await db.users.update_one({"id": uid}, {"$set": {"notification_dismissals": merged}})
 
+    unread = _unread_filter()
+    role = (current_user.get("role") or "sales").lower()
+    marked_stored = 0
+    if role == "admin":
+        result = await db.notifications.update_many(unread, {"$set": {"is_read": True}})
+        marked_stored = result.modified_count
+    else:
+        result1 = await db.notifications.update_many(
+            {"$and": [{"recipient_user_id": uid}, unread]},
+            {"$set": {"is_read": True}},
+        )
+        result2 = await db.notifications.update_many(
+            {
+                "$and": [
+                    unread,
+                    {
+                        "$or": [
+                            {"recipient_user_id": {"$exists": False}},
+                            {"recipient_user_id": None},
+                            {"recipient_user_id": ""},
+                        ]
+                    },
+                ]
+            },
+            {"$set": {"is_read": True}},
+        )
+        marked_stored = result1.modified_count + result2.modified_count
 
+    return {
+        "message": "All notifications marked as read",
+        "dismissed_auto": len(auto_ids),
+        "marked_stored": marked_stored,
+    }
+
+
+@router.put("/{notification_id}/read")
+async def mark_notification_read(
+    notification_id: str,
+    current_user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    if notification_id.startswith("auto-"):
+        uid = current_user["id"]
+        user = await db.users.find_one({"id": uid}, {"_id": 0, "notification_dismissals": 1}) or {}
+        cur = list(user.get("notification_dismissals") or [])
+        if notification_id not in cur:
+            cur.append(notification_id)
+            cur = cur[-_MAX_DISMISSALS:]
+            await db.users.update_one({"id": uid}, {"$set": {"notification_dismissals": cur}})
+        return {"message": "Notification marked as read"}
 
     role = (current_user.get("role") or "sales").lower()
-
-    if role == "admin":
-
-        await db.notifications.update_many({"is_read": False}, {"$set": {"is_read": True}})
-
-    else:
-
-        await db.notifications.update_many(
-
-            {
-
-                "recipient_user_id": uid,
-
-                "is_read": False,
-
-            },
-
-            {"$set": {"is_read": True}},
-
-        )
-
-        await db.notifications.update_many(
-
-            {
-
-                "is_read": False,
-
-                "$or": [
-
-                    {"recipient_user_id": {"$exists": False}},
-
-                    {"recipient_user_id": None},
-
-                    {"recipient_user_id": ""},
-
-                ],
-
-            },
-
-            {"$set": {"is_read": True}},
-
-        )
-
-    return {"message": "All notifications marked as read"}
+    filt: Dict[str, Any] = {"$and": [{"id": notification_id}, _unread_filter()]}
+    if role != "admin":
+        filt["$and"].append({"$or": _recipient_scope_filter(current_user)})
+    await db.notifications.update_one(filt, {"$set": {"is_read": True}})
+    return {"message": "Notification marked as read"}
 
 

@@ -22,6 +22,21 @@ export function sanitizeApiErrorMessage(message) {
   return String(message).replace(/\bFutwork\b/gi, CALLING_ENGINE_NAME);
 }
 
+/** White-label notification title/message text (bell + notifications page). */
+export function sanitizeNotificationText(text) {
+  if (text == null || text === "") return text ?? "";
+  let s = String(text);
+  s = s.replace(/\bFutwork\s+Agent\b/gi, "Rustomjee AI Sales Agent");
+  for (const [key, label] of Object.entries(SOURCE_LABELS)) {
+    s = s.replace(new RegExp(key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), label);
+  }
+  s = s.replace(/\bfutwork_orphan_call\b/gi, "Inbound Call");
+  s = s.replace(/\bFutwork\b/gi, CALLING_ENGINE_NAME);
+  return s;
+}
+
+export const isNotificationUnread = (n) => n?.is_read !== true;
+
 export const UI_COPY = {
   engineCalled: "Engine Called",
   pushToCallingEngine: "Push to Calling Engine",

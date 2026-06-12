@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
@@ -14,6 +14,9 @@ import {
   REGIONAL_COLORS,
 } from "../lib/adapters/dashboardAdapter";
 import ChartTooltip from "../components/shared/ChartTooltip";
+import { DashboardSkeleton } from "../components/feedback/Skeletons";
+import { LoadingOverlay, FetchError } from "../components/loading";
+import { toast } from "sonner";
 import {
   Users,
   Crown,
@@ -25,6 +28,7 @@ import {
   ChevronDown,
   Info,
   Building,
+  Sun,
 } from "lucide-react";
 import {
   BarChart,
@@ -58,38 +62,60 @@ const LEAD_CRITERIA = {
   cold: {
     title: "Cold Lead Criteria",
     rules: [
-      "Qualification category is Cold (area or timeline without budget match)",
-      "Matches Virtual Customer qualification tag and dashboard drill-down",
+      "Matches: Area only, Timeline only, or Area + Timeline",
     ],
   },
   dormant: {
     title: "Dormant Lead Criteria",
     rules: [
-      "Qualification category is Dormant",
-      "Matches dashboard drill-down and card badge",
+      "Matches: No match (No Budget, Area, or Timeline match)",
     ],
   },
   hot: {
     title: "Hot Lead Criteria",
     rules: [
-      "Qualification category is Hot (budget match, area not matched)",
-      "Matches Virtual Customer qualification tag and dashboard drill-down",
+      "Matches: (Budget + Area) OR (Budget + Timeline)",
     ],
   },
   qualified: {
     title: "Qualified Lead Criteria",
     rules: [
-      "Qualification category is Qualified (budget, area, and timeline match)",
-      "Matches Virtual Customer qualification tag and dashboard drill-down",
+      "Matches: Budget + Area + Timeline",
     ],
   },
-  vip_pipeline: {
-    title: "VIP Pipeline Criteria",
+  warm: {
+    title: "Warm Lead Criteria",
     rules: [
-      "Qualification category is VIP Pipeline",
-      "Matches dashboard drill-down and card badge",
+      "Matches: ONLY Budget",
     ],
   },
+};
+
+const LeadCriteriaTooltip = ({ type }) => {
+  const criteria = LEAD_CRITERIA[type];
+  if (!criteria) return null;
+  return (
+    <TooltipProvider>
+      <TooltipUI>
+        <TooltipTrigger asChild>
+          <button type="button" className="ml-2 text-[#52525B] hover:text-[#C5A059] transition-colors">
+            <Info size={16} />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="right" className="bg-[#1A1A1A] border-white/10 p-4 max-w-xs">
+          <p className="text-[#C5A059] font-medium mb-2">{criteria.title}</p>
+          <ul className="space-y-1">
+            {criteria.rules.map((rule, idx) => (
+              <li key={idx} className="text-[#A1A1AA] text-xs flex items-start gap-2">
+                <span className="text-[#C5A059] mt-0.5">•</span>
+                {rule}
+              </li>
+            ))}
+          </ul>
+        </TooltipContent>
+      </TooltipUI>
+    </TooltipProvider>
+  );
 };
 
 const DashboardPage = () => {
@@ -100,6 +126,8 @@ const DashboardPage = () => {
   const [projectMeta, setProjectMeta] = useState(null);
   const [salesOwners, setSalesOwners] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [timeFilter, setTimeFilter] = useState("all");
   const [projectFilter, setProjectFilter] = useState("all");
   const [dateRange, setDateRange] = useState(null);
@@ -114,6 +142,7 @@ const DashboardPage = () => {
 
   const fetchData = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const params = buildStatsParams(timeFilter, projectFilter, dateRange);
       const [statsRes, projectsRes, ownersRes] = await Promise.all([
@@ -126,8 +155,11 @@ const DashboardPage = () => {
       setProjectList(projects);
       setProjectMeta(meta);
       setSalesOwners(ownersRes.data || []);
-    } catch (error) {
-      console.error("Failed to fetch dashboard:", error);
+      setHasLoadedOnce(true);
+    } catch (err) {
+      console.error("Failed to fetch dashboard:", err);
+      toast.error("Failed to load dashboard");
+      setError(err);
     } finally {
       setLoading(false);
     }
@@ -147,17 +179,26 @@ const DashboardPage = () => {
     );
   };
 
-  const leadSources = mapLeadSources(stats);
-  const statusData = mapStatusBreakdown(stats);
-  const dispositionData = mapDispositionBreakdown(stats);
+  const leadSources = useMemo(() => mapLeadSources(stats), [stats]);
+  const statusData = useMemo(() => mapStatusBreakdown(stats), [stats]);
+  const dispositionData = useMemo(() => mapDispositionBreakdown(stats), [stats]);
+  const displayProjects = useMemo(() => {
+    const otherProjectCard =
+      projectMeta && projectMeta.otherCount > 0
+        ? { name: "__none__", label: "Other / No project", count: projectMeta.otherCount }
+        : null;
+    return otherProjectCard
+      ? [
+        ...projectList,
+        {
+          name: otherProjectCard.name,
+          count: otherProjectCard.count,
+          label: otherProjectCard.label,
+        },
+      ]
+      : projectList;
+  }, [projectList, projectMeta]);
   const projectsForGrid = projectList;
-  const otherProjectCard =
-    projectMeta && projectMeta.otherCount > 0
-      ? { name: "__none__", label: "Other / No project", count: projectMeta.otherCount }
-      : null;
-  const displayProjects = otherProjectCard
-    ? [...projectsForGrid, { name: otherProjectCard.name, count: otherProjectCard.count, label: otherProjectCard.label }]
-    : projectsForGrid;
 
   const handleDispositionClick = (entry) => {
     if (!entry?.name) return;
@@ -186,41 +227,13 @@ const DashboardPage = () => {
     },
   });
   const projectNames = projectsForGrid.map((p) => p.name);
-
-  const LeadCriteriaTooltip = ({ type }) => {
-    const criteria = LEAD_CRITERIA[type];
-    if (!criteria) return null;
-    return (
-      <TooltipProvider>
-        <TooltipUI>
-          <TooltipTrigger asChild>
-            <button type="button" className="ml-2 text-[#52525B] hover:text-[#C5A059] transition-colors">
-              <Info size={16} />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent side="right" className="bg-[#1A1A1A] border-white/10 p-4 max-w-xs">
-            <p className="text-[#C5A059] font-medium mb-2">{criteria.title}</p>
-            <ul className="space-y-1">
-              {criteria.rules.map((rule, idx) => (
-                <li key={idx} className="text-[#A1A1AA] text-xs flex items-start gap-2">
-                  <span className="text-[#C5A059] mt-0.5">•</span>
-                  {rule}
-                </li>
-              ))}
-            </ul>
-          </TooltipContent>
-        </TooltipUI>
-      </TooltipProvider>
-    );
+  const isInitialLoading = loading && !hasLoadedOnce;
+  const isRefetching = loading && hasLoadedOnce;
+  const displayStat = (key) => {
+    if (!stats) return "—";
+    const v = stats[key];
+    return v != null ? v : 0;
   };
-
-  if (loading) {
-    return (
-      <motion.div className="flex items-center justify-center h-64">
-        <p className="text-[#C5A059] animate-pulse">Loading dashboard...</p>
-      </motion.div>
-    );
-  }
 
   return (
     <motion.div className="space-y-8">
@@ -329,367 +342,313 @@ const DashboardPage = () => {
         )}
       </motion.div>
 
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.1 }}
-        className="grid grid-cols-1 md:grid-cols-2 gap-4"
-      >
-        <div
-          className="glass-card rounded-lg p-6 border-l-4 border-blue-500 card-hover cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#C5A059]/50"
-          data-testid="cold-leads-tile"
-          {...statTileProps("cold")}
-        >
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="flex items-center">
-                <p className="text-[#A1A1AA] text-sm uppercase tracking-wider">Cold Leads</p>
-                <LeadCriteriaTooltip type="cold" />
-              </div>
-              <p className="font-serif text-4xl text-white mt-2">{stats?.cold_leads ?? 0}</p>
-              <p className="text-blue-400 text-sm mt-1">Needs Re-engagement</p>
-            </div>
-            <div className="w-14 h-14 rounded-full bg-blue-500/20 flex items-center justify-center">
-              <Snowflake className="text-blue-500" size={28} />
-            </div>
-          </div>
-        </div>
-
-        <div
-          className="glass-card rounded-lg p-6 border-l-4 border-orange-500 card-hover cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#C5A059]/50"
-          data-testid="dormant-leads-tile"
-          {...statTileProps("dormant")}
-        >
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="flex items-center">
-                <p className="text-[#A1A1AA] text-sm uppercase tracking-wider">Dormant Leads</p>
-                <LeadCriteriaTooltip type="dormant" />
-              </div>
-              <p className="font-serif text-4xl text-white mt-2">{stats?.dormant_leads ?? 0}</p>
-              <p className="text-orange-400 text-sm mt-1">No activity in 7+ days</p>
-            </div>
-            <div className="w-14 h-14 rounded-full bg-orange-500/20 flex items-center justify-center">
-              <TrendingDown className="text-orange-500" size={28} />
-            </div>
-          </div>
-        </div>
-      </motion.div>
-
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.2 }}
-        className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4"
-      >
-        <div
-          className="glass-card rounded-lg p-6 card-hover cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#C5A059]/50"
-          data-testid="total-leads-tile"
-          {...statTileProps(null)}
-        >
-          <div className="flex items-center justify-between mb-4">
-            <div className="w-12 h-12 rounded-lg bg-[#C5A059]/20 flex items-center justify-center">
-              <Users className="text-[#C5A059]" size={24} />
-            </div>
-          </div>
-          <p className="text-[#A1A1AA] text-sm">Total Leads</p>
-          <p className="font-serif text-3xl text-white mt-1">{stats?.total_leads ?? 0}</p>
-        </div>
-
-        <div
-          className="glass-card rounded-lg p-6 card-hover cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#C5A059]/50"
-          data-testid="vip-leads-tile"
-          {...statTileProps("vip_pipeline")}
-        >
-          <div className="flex items-center justify-between mb-4">
-            <div className="w-12 h-12 rounded-lg bg-purple-500/20 flex items-center justify-center">
-              <Crown className="text-purple-500" size={24} />
-            </div>
-            <LeadCriteriaTooltip type="vip_pipeline" />
-          </div>
-          <p className="text-[#A1A1AA] text-sm">VIP Pipeline</p>
-          <p className="font-serif text-3xl text-white mt-1">{stats?.vip_pipeline ?? 0}</p>
-        </div>
-
-        <div
-          className="glass-card rounded-lg p-6 card-hover cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#C5A059]/50"
-          data-testid="hot-leads-tile"
-          {...statTileProps("hot")}
-        >
-          <div className="flex items-center justify-between mb-4">
-            <div className="w-12 h-12 rounded-lg bg-red-500/20 flex items-center justify-center">
-              <Flame className="text-red-500" size={24} />
-            </div>
-            <LeadCriteriaTooltip type="hot" />
-          </div>
-          <p className="text-[#A1A1AA] text-sm">Hot Leads</p>
-          <p className="font-serif text-3xl text-white mt-1">{stats?.hot_leads ?? 0}</p>
-        </div>
-
-        <div
-          className="glass-card rounded-lg p-6 card-hover cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#C5A059]/50"
-          data-testid="qualified-leads-tile"
-          {...statTileProps("qualified")}
-        >
-          <div className="flex items-center justify-between mb-4">
-            <div className="w-12 h-12 rounded-lg bg-green-500/20 flex items-center justify-center">
-              <CheckCircle className="text-green-500" size={24} />
-            </div>
-            <LeadCriteriaTooltip type="qualified" />
-          </div>
-          <p className="text-[#A1A1AA] text-sm">Qualified Leads</p>
-          <p className="font-serif text-3xl text-white mt-1">{stats?.qualified_leads ?? 0}</p>
-        </div>
-      </motion.div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <motion.div
-          initial={{ opacity: 0, x: -20 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ delay: 0.3 }}
-          className="glass-card rounded-lg p-6"
-          data-testid="lead-source-chart"
-        >
-          <h3 className="font-serif text-xl text-white mb-6">Lead Source Performance</h3>
-          <ResponsiveContainer width="100%" height={400}>
-            <BarChart data={leadSources} layout="vertical" margin={{ top: 0, right: 20, bottom: 0, left: 10 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-              <XAxis type="number" stroke="#52525B" />
-              <YAxis
-                type="category"
-                dataKey="name"
-                stroke="#A1A1AA"
-                tick={{ fill: "#A1A1AA", fontSize: 11 }}
-                width={140}
-              />
-              <Tooltip content={<ChartTooltip />} />
-              <defs>
-                <linearGradient id="goldGradient" x1="0" y1="0" x2="1" y2="0">
-                  <stop offset="0%" stopColor="#C5A059" />
-                  <stop offset="100%" stopColor="#E5C079" />
-                </linearGradient>
-              </defs>
-              <Bar dataKey="count" fill="url(#goldGradient)" radius={[0, 4, 4, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </motion.div>
-
-        <motion.div
-          initial={{ opacity: 0, x: 20 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ delay: 0.3 }}
-          className="glass-card rounded-lg p-6"
-          data-testid="lead-status-chart"
-        >
-          <h3 className="font-serif text-xl text-white mb-6">Lead Status Distribution</h3>
-          <div className="flex items-center justify-center">
-            <ResponsiveContainer width="100%" height={300}>
-              <PieChart>
-                <Pie
-                  data={statusData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={60}
-                  outerRadius={100}
-                  paddingAngle={5}
-                  dataKey="value"
-                  nameKey="name"
-                >
-                  {statusData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
-                  ))}
-                </Pie>
-                <Tooltip
-                  content={({ active, payload }) => {
-                    if (active && payload?.length) {
-                      return (
-                        <div className="bg-[#1A1A1A] border border-white/10 rounded-lg p-3 shadow-xl">
-                          <p className="text-[#C5A059] font-medium">{payload[0].name}</p>
-                          <p className="text-white">{payload[0].value} leads</p>
-                        </div>
-                      );
-                    }
-                    return null;
-                  }}
-                />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-          <div className="flex flex-wrap justify-center gap-x-4 gap-y-2 mt-4">
-            {statusData.map((item) => (
-              <div key={item.name} className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: item.color }} />
-                <span className="text-[#A1A1AA] text-xs whitespace-nowrap">
-                  {item.name} ({item.value})
-                </span>
-              </div>
-            ))}
-          </div>
-        </motion.div>
-      </div>
-
-      {dispositionData.length > 0 && (
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.35 }}
-          className="glass-card rounded-lg p-6"
-          data-testid="disposition-chart"
-        >
-          <h3 className="font-serif text-xl text-white mb-2">Disposition Distribution</h3>
-          <p className="text-[#737373] text-xs mb-4">Click a slice to filter Virtual Customer</p>
-          <div className="flex items-center justify-center">
-            <ResponsiveContainer width="100%" height={280}>
-              <PieChart>
-                <Pie
-                  data={dispositionData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={55}
-                  outerRadius={95}
-                  paddingAngle={4}
-                  dataKey="value"
-                  nameKey="name"
-                  style={{ cursor: "pointer" }}
-                  onClick={(_, index) => handleDispositionClick(dispositionData[index])}
-                >
-                  {dispositionData.map((entry, index) => (
-                    <Cell key={`disp-cell-${index}`} fill={entry.color} />
-                  ))}
-                </Pie>
-                <Tooltip
-                  content={({ active, payload }) => {
-                    if (active && payload?.length) {
-                      return (
-                        <div className="bg-[#1A1A1A] border border-white/10 rounded-lg p-3 shadow-xl">
-                          <p className="text-[#C5A059] font-medium">{payload[0].name}</p>
-                          <p className="text-white">{payload[0].value} leads</p>
-                        </div>
-                      );
-                    }
-                    return null;
-                  }}
-                />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-        </motion.div>
-      )}
-
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.4 }}
-        className="glass-card rounded-lg p-6"
-        data-testid="sales-team-heatmap"
-      >
-        <h3 className="font-serif text-xl text-white mb-1">Top 10 Sales Agents</h3>
-        <p className="text-[#52525B] text-sm mb-6">
-          By assigned presales leads
-          {salesOwners.length > 0
-            ? ` · ${formatDashboardNumber(salesOwners.reduce((s, o) => s + (o.count || 0), 0))} leads shown`
-            : ""}
-        </p>
-        {salesOwners.length === 0 ? (
-          <p className="text-[#52525B] text-sm">No assigned agent data for the selected filters.</p>
-        ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
-            {salesOwners.map((owner, index) => {
-              const colorScheme = REGIONAL_COLORS[index % REGIONAL_COLORS.length];
-              return (
+      {error && !stats ? (
+        <FetchError
+          title="Dashboard unavailable"
+          message="We couldn't load your dashboard data. Check your connection and try again."
+          onRetry={fetchData}
+        />
+      ) : (
+        <div className="relative space-y-8">
+          {isInitialLoading ? (
+            <DashboardSkeleton />
+          ) : (
+            <div className="space-y-8">
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.1 }}
+                className="grid grid-cols-1 md:grid-cols-2 gap-4"
+              >
                 <div
-                  key={owner.name}
-                  role="button"
-                  tabIndex={0}
-                  className="p-4 rounded-lg text-center transition-all hover:scale-105 cursor-pointer"
-                  onClick={() =>
-                    navigate(
-                      `/virtual-customer?assigned_rep=${encodeURIComponent(owner.name)}&futwork_sync_status=all`
-                    )
-                  }
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      navigate(
-                        `/virtual-customer?assigned_rep=${encodeURIComponent(owner.name)}&futwork_sync_status=all`
-                      );
-                    }
-                  }}
-                  style={{
-                    background: colorScheme.bg,
-                    border: `2px solid ${colorScheme.border}`,
-                  }}
+                  className="glass-card rounded-lg p-6 border-l-4 border-blue-500 card-hover cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#C5A059]/50"
+                  data-testid="cold-leads-tile"
+                  {...statTileProps("cold")}
                 >
-                  <p className="text-white font-medium text-sm truncate">{owner.name}</p>
-                  <p className="font-serif text-2xl mt-1" style={{ color: colorScheme.text }}>
-                    {owner.count}
-                  </p>
-                  <p className="text-[#52525B] text-xs">leads</p>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="flex items-center">
+                        <p className="text-[#A1A1AA] text-sm uppercase tracking-wider">Cold Leads</p>
+                        <LeadCriteriaTooltip type="cold" />
+                      </div>
+                      <p className="font-serif text-4xl text-white mt-2 tabular-nums truncate" title={String(displayStat("cold_leads"))}>{displayStat("cold_leads")}</p>
+                      <p className="text-blue-400 text-sm mt-1">Needs Re-engagement</p>
+                    </div>
+                    <div className="w-14 h-14 rounded-full bg-blue-500/20 flex items-center justify-center">
+                      <Snowflake className="text-blue-500" size={28} />
+                    </div>
+                  </div>
                 </div>
-              );
-            })}
-          </div>
-        )}
-      </motion.div>
 
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.5 }}
-        className="glass-card rounded-lg p-6"
-        data-testid="project-distribution"
-      >
-        <h3 className="font-serif text-xl text-white mb-2">Project Interest Distribution</h3>
-        <p className="text-[#52525B] text-sm mb-4">
-          Click on a project to view its leads
-          {projectMeta ? (
-            <>
-              {" "}
-              · Top 10 shown · {formatDashboardNumber(projectMeta.withProject)} with project ·{" "}
-              {formatDashboardNumber(projectMeta.withoutProject)} without ·{" "}
-              {formatDashboardNumber(projectMeta.totalLeads)} total
-            </>
-          ) : null}
-        </p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {displayProjects.map((project) => (
-            <div
-              key={project.name}
-              role="button"
-              tabIndex={0}
-              onClick={() => handleProjectClick(project.name)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handleProjectClick(project.name);
-              }}
-              className="p-4 rounded-lg bg-[#1A1A1A] border border-white/10 hover:border-[#C5A059]/50 transition-all cursor-pointer group overflow-hidden relative"
-              data-testid={`project-card-${project.name}`}
-            >
-              <div className="relative z-10">
-                <div className="flex items-center gap-2 mb-3">
-                  <Building className="text-[#C5A059]" size={18} />
-                  <span className="text-white font-medium group-hover:text-[#C5A059] transition-colors">
-                    {project.label || project.name}
-                  </span>
+                <div
+                  className="glass-card rounded-lg p-6 border-l-4 border-orange-500 card-hover cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#C5A059]/50"
+                  data-testid="dormant-leads-tile"
+                  {...statTileProps("dormant")}
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="flex items-center">
+                        <p className="text-[#A1A1AA] text-sm uppercase tracking-wider">Dormant Leads</p>
+                        <LeadCriteriaTooltip type="dormant" />
+                      </div>
+                      <p className="font-serif text-4xl text-white mt-2 tabular-nums truncate" title={String(displayStat("dormant_leads"))}>{displayStat("dormant_leads")}</p>
+                      <p className="text-orange-400 text-sm mt-1">No activity in 7+ days</p>
+                    </div>
+                    <div className="w-14 h-14 rounded-full bg-orange-500/20 flex items-center justify-center">
+                      <TrendingDown className="text-orange-500" size={28} />
+                    </div>
+                  </div>
                 </div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-[#52525B] text-sm">Leads</span>
-                  <span className="text-[#C5A059] font-serif text-xl">{project.count}</span>
+              </motion.div>
+
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.2 }}
+                className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4"
+              >
+                <div
+                  className="glass-card rounded-lg p-6 card-hover cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#C5A059]/50"
+                  data-testid="total-leads-tile"
+                  {...statTileProps(null)}
+                >
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="w-12 h-12 rounded-lg bg-[#C5A059]/20 flex items-center justify-center">
+                      <Users className="text-[#C5A059]" size={24} />
+                    </div>
+                  </div>
+                  <p className="text-[#A1A1AA] text-sm">Total Leads</p>
+                  <p className="font-serif text-3xl text-white mt-1 tabular-nums truncate" title={String(displayStat("total_leads"))}>{displayStat("total_leads")}</p>
                 </div>
-                <div className="h-2 bg-black/50 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-gradient-to-r from-[#C5A059] to-[#E5C079] rounded-full transition-all duration-500"
-                    style={{
-                      width: `${(project.count / Math.max(...displayProjects.map((p) => p.count), 1)) * 100}%`,
-                    }}
-                  />
+
+                <div
+                  className="glass-card rounded-lg p-6 card-hover cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#C5A059]/50"
+                  data-testid="warm-leads-tile"
+                  {...statTileProps("warm")}
+                >
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="w-12 h-12 rounded-lg bg-orange-500/20 flex items-center justify-center">
+                      <Sun className="text-orange-500" size={24} />
+                    </div>
+                    <LeadCriteriaTooltip type="warm" />
+                  </div>
+                  <p className="text-[#A1A1AA] text-sm">Warm Leads</p>
+                  <p className="font-serif text-3xl text-white mt-1 tabular-nums truncate" title={String(displayStat("warm_leads"))}>{displayStat("warm_leads")}</p>
                 </div>
-                <p className="text-[#52525B] text-xs mt-2 group-hover:text-[#A1A1AA] transition-colors">
-                  Click to view leads →
-                </p>
+
+                <div
+                  className="glass-card rounded-lg p-6 card-hover cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#C5A059]/50"
+                  data-testid="hot-leads-tile"
+                  {...statTileProps("hot")}
+                >
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="w-12 h-12 rounded-lg bg-red-500/20 flex items-center justify-center">
+                      <Flame className="text-red-500" size={24} />
+                    </div>
+                    <LeadCriteriaTooltip type="hot" />
+                  </div>
+                  <p className="text-[#A1A1AA] text-sm">Hot Leads</p>
+                  <p className="font-serif text-3xl text-white mt-1 tabular-nums truncate" title={String(displayStat("hot_leads"))}>{displayStat("hot_leads")}</p>
+                </div>
+
+                <div
+                  className="glass-card rounded-lg p-6 card-hover cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#C5A059]/50"
+                  data-testid="qualified-leads-tile"
+                  {...statTileProps("qualified")}
+                >
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="w-12 h-12 rounded-lg bg-green-500/20 flex items-center justify-center">
+                      <CheckCircle className="text-green-500" size={24} />
+                    </div>
+                    <LeadCriteriaTooltip type="qualified" />
+                  </div>
+                  <p className="text-[#A1A1AA] text-sm">Qualified Leads</p>
+                  <p className="font-serif text-3xl text-white mt-1 tabular-nums truncate" title={String(displayStat("qualified_leads"))}>{displayStat("qualified_leads")}</p>
+                </div>
+              </motion.div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {dispositionData.length > 0 ? (
+                  <motion.div
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: 0.3 }}
+                    className="glass-card rounded-lg p-6"
+                    data-testid="disposition-chart"
+                  >
+                    <h3 className="font-serif text-xl text-white mb-2">Disposition Distribution</h3>
+                    <p className="text-[#737373] text-xs mb-4">Click a slice to filter Virtual Customer</p>
+                    <div className="flex items-center justify-center">
+                      <ResponsiveContainer width="100%" height={280}>
+                        <PieChart>
+                          <Pie
+                            data={dispositionData}
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={55}
+                            outerRadius={95}
+                            paddingAngle={4}
+                            dataKey="value"
+                            nameKey="name"
+                            style={{ cursor: "pointer" }}
+                            onClick={(_, index) => handleDispositionClick(dispositionData[index])}
+                          >
+                            {dispositionData.map((entry, index) => (
+                              <Cell key={`disp-cell-${index}`} fill={entry.color} />
+                            ))}
+                          </Pie>
+                          <Tooltip
+                            content={({ active, payload }) => {
+                              if (active && payload?.length) {
+                                return (
+                                  <div className="bg-[#1A1A1A] border border-white/10 rounded-lg p-3 shadow-xl">
+                                    <p className="text-[#C5A059] font-medium">{payload[0].name}</p>
+                                    <p className="text-white">{payload[0].value} leads</p>
+                                  </div>
+                                );
+                              }
+                              return null;
+                            }}
+                          />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                    <div className="flex flex-wrap justify-center gap-x-4 gap-y-2 mt-4">
+                      {dispositionData.map((item) => (
+                        <div key={item.name} className="flex items-center gap-2">
+                          <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: item.color }} />
+                          <span className="text-[#A1A1AA] text-xs whitespace-nowrap">
+                            {item.name} ({item.value})
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </motion.div>
+                ) : (
+                  <div className="glass-card rounded-lg p-6 flex items-center justify-center text-[#52525B]">
+                    No disposition data available
+                  </div>
+                )}
+
+                <motion.div
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: 0.3 }}
+                  className="glass-card rounded-lg p-6"
+                  data-testid="lead-status-chart"
+                >
+                  <h3 className="font-serif text-xl text-white mb-6">Lead Status Distribution</h3>
+                  <div className="flex items-center justify-center">
+                    <ResponsiveContainer width="100%" height={300}>
+                      <PieChart>
+                        <Pie
+                          data={statusData}
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={60}
+                          outerRadius={100}
+                          paddingAngle={5}
+                          dataKey="value"
+                          nameKey="name"
+                        >
+                          {statusData.map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={entry.color} />
+                          ))}
+                        </Pie>
+                        <Tooltip
+                          content={({ active, payload }) => {
+                            if (active && payload?.length) {
+                              return (
+                                <div className="bg-[#1A1A1A] border border-white/10 rounded-lg p-3 shadow-xl">
+                                  <p className="text-[#C5A059] font-medium">{payload[0].name}</p>
+                                  <p className="text-white">{payload[0].value} leads</p>
+                                </div>
+                              );
+                            }
+                            return null;
+                          }}
+                        />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <div className="flex flex-wrap justify-center gap-x-4 gap-y-2 mt-4">
+                    {statusData.map((item) => (
+                      <div key={item.name} className="flex items-center gap-2">
+                        <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: item.color }} />
+                        <span className="text-[#A1A1AA] text-xs whitespace-nowrap">
+                          {item.name} ({item.value})
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </motion.div>
               </div>
+
+
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.5 }}
+                className="glass-card rounded-lg p-6"
+                data-testid="project-distribution"
+              >
+                <h3 className="font-serif text-xl text-white mb-2">Project Interest Distribution</h3>
+                <p className="text-[#52525B] text-sm mb-4">
+                  Click on a project to view its leads
+                  {projectMeta ? (
+                    <>
+                      {" "}
+                      · Top 10 shown · {formatDashboardNumber(projectMeta.withProject)} with project ·{" "}
+                      {formatDashboardNumber(projectMeta.withoutProject)} without ·{" "}
+                      {formatDashboardNumber(projectMeta.totalLeads)} total
+                    </>
+                  ) : null}
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  {displayProjects.map((project) => (
+                    <div
+                      key={project.name}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => handleProjectClick(project.name)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") handleProjectClick(project.name);
+                      }}
+                      className="p-4 rounded-lg bg-[#1A1A1A] border border-white/10 hover:border-[#C5A059]/50 transition-all cursor-pointer group overflow-hidden relative"
+                      data-testid={`project-card-${project.name}`}
+                    >
+                      <div className="relative z-10">
+                        <div className="flex items-center gap-2 mb-3 min-w-0">
+                          <Building className="text-[#C5A059] flex-shrink-0" size={18} />
+                          <span className="text-white font-medium group-hover:text-[#C5A059] transition-colors truncate" title={project.label || project.name}>
+                            {project.label || project.name}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-[#52525B] text-sm">Leads</span>
+                          <span className="text-[#C5A059] font-serif text-xl">{project.count}</span>
+                        </div>
+                        <div className="h-2 bg-black/50 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-gradient-to-r from-[#C5A059] to-[#E5C079] rounded-full transition-all duration-500"
+                            style={{
+                              width: `${(project.count / Math.max(...displayProjects.map((p) => p.count), 1)) * 100}%`,
+                            }}
+                          />
+                        </div>
+                        <p className="text-[#52525B] text-xs mt-2 group-hover:text-[#A1A1AA] transition-colors">
+                          Click to view leads →
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </motion.div>
             </div>
-          ))}
+          )}
+          <LoadingOverlay show={isRefetching} />
         </div>
-      </motion.div>
+      )}
     </motion.div>
   );
 };
