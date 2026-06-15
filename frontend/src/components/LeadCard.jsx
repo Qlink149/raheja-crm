@@ -155,18 +155,7 @@ const LeadCard = memo(function LeadCard({ lead, onSelect }) {
         <ChevronRight className="w-5 h-5 text-[#525252] group-hover:text-[#C5A059] transition-colors flex-shrink-0" />
       </div>
 
-      <div className="mt-4 pt-3 border-t border-white/5 flex items-center justify-between gap-2 min-w-0">
-        <span
-          className={`text-xs px-2 py-1 rounded truncate max-w-[50%] ${
-            lead.status === "Qualified"
-              ? "bg-emerald-900/30 text-emerald-300"
-              : lead.status === "Open"
-              ? "bg-[#C5A059]/20 text-[#C5A059]"
-              : "bg-red-900/30 text-red-300"
-          }`}
-        >
-          {lead.status || "—"}
-        </span>
+      <div className="mt-4 pt-3 border-t border-white/5 flex items-center justify-end gap-2 min-w-0">
         <span className="text-[#525252] text-xs truncate">{lead.location_category}</span>
       </div>
     </div>
