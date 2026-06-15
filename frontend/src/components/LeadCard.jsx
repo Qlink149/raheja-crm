@@ -42,19 +42,7 @@ const getDisplayName = (name) => {
   return name;
 };
 
-const isNonContactableStatus = (status) => {
-  const s = (status || "").trim().toLowerCase().replace(/\s+/g, " ");
-  return (
-    /^non[\s-]*contactable$/.test(s) ||
-    s === "lost" ||
-    s === "dnc" ||
-    s === "do not call" ||
-    s === "not reachable"
-  );
-};
-
 const getLeadQualificationTag = (lead) => {
-  if (isNonContactableStatus(lead?.status)) return "";
   return (lead?.qualification_category || "").trim();
 };
 

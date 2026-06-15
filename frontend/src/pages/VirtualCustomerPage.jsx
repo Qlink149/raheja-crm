@@ -412,20 +412,8 @@ const VirtualCustomerPage = () => {
     return "text-[#A3A3A3] bg-white/5 border border-white/5";
   };
 
-  const isNonContactableStatus = (status) => {
-    const s = (status || "").trim().toLowerCase().replace(/\s+/g, " ");
-    return (
-      /^non[\s-]*contactable$/.test(s) ||
-      s === "lost" ||
-      s === "dnc" ||
-      s === "do not call" ||
-      s === "not reachable"
-    );
-  };
-
   /** Primary card tag: qualification hierarchy (not legacy temperature). */
   const getLeadQualificationTag = (lead) => {
-    if (isNonContactableStatus(lead?.status)) return "";
     return (lead?.qualification_category || "").trim();
   };
 

@@ -7,6 +7,7 @@ from ...services.qualification_buckets import (
     build_base_query,
     bucket_query,
 )
+from ...utils.futwork_disposition_stats import aggregate_futwork_disposition_stats
 from .analytics import (
     _is_invalid_rep_name,
     _merge_query_with_valid_projects,
@@ -54,47 +55,25 @@ async def get_dashboard_stats(
         results = await db.leads.aggregate(pipeline).to_list(length=100)
         return {str(r["_id"]) if r["_id"] else "Other": r["count"] for r in results}
 
-    lead_status_stats = await get_distribution("status")
+    lead_status_stats = {
+        "Cold": cold_leads,
+        "Dormant": dormant_leads,
+        "Warm": warm_leads,
+        "Hot": hot_leads,
+        "Qualified": qualified_leads,
+    }
     lead_source_stats = await get_distribution("source")
     regional_demand = await get_distribution("location_category")
     budget_distribution = await get_distribution("budget_category")
 
-    disposition_pipeline = [
-        {"$match": base_query},
-        {
-            "$project": {
-                "disp": {
-                    "$cond": [
-                        {
-                            "$and": [
-                                {"$ne": ["$disposition", None]},
-                                {"$ne": ["$disposition", ""]},
-                                {"$ne": ["$disposition", "New"]},
-                            ]
-                        },
-                        "$disposition",
-                        {
-                            "$cond": [
-                                {
-                                    "$and": [
-                                        {"$ne": ["$ai_disposition", None]},
-                                        {"$ne": ["$ai_disposition", ""]},
-                                    ]
-                                },
-                                "$ai_disposition",
-                                "Other",
-                            ]
-                        },
-                    ]
-                }
-            }
-        },
-        {"$group": {"_id": "$disp", "count": {"$sum": 1}}},
-    ]
-    disp_rows = await db.leads.aggregate(disposition_pipeline).to_list(50)
-    disposition_stats = {
-        str(r["_id"]) if r["_id"] else "Other": r["count"] for r in disp_rows
-    }
+    # Futwork call-level dispositions (same source as AI Calling KPIs).
+    disposition_stats = await aggregate_futwork_disposition_stats(
+        db,
+        project=project,
+        days=days,
+        start_date=start_date,
+        end_date=end_date,
+    )
 
     return {
         "total_leads": total_leads,

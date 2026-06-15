@@ -275,7 +275,6 @@ const AICallingPage = () => {
   const [total, setTotal] = useState(0);
   const [hasMore, setHasMore] = useState(false);
   const [summary, setSummary] = useState(null);
-  const [aiBatchSummary, setAiBatchSummary] = useState(null);
   const [dateRange, setDateRange] = useState(null);
 
   // Virtual list scroll container
@@ -284,9 +283,18 @@ const AICallingPage = () => {
   // -------- URL deep-link bootstrap --------
   useEffect(() => {
     const q = searchParams.get("q") || searchParams.get("phone") || "";
-    const leadId = searchParams.get("leadId");
     if (q) setSearchQuery(q);
     if (searchParams.get("disposition")) setDispositionFilter(searchParams.get("disposition"));
+
+    const startDate = searchParams.get("start_date");
+    const endDate = searchParams.get("end_date");
+    if (startDate) {
+      const from = new Date(`${startDate}T12:00:00`);
+      const to = new Date(`${(endDate || startDate)}T12:00:00`);
+      if (!Number.isNaN(from.getTime()) && !Number.isNaN(to.getTime())) {
+        setDateRange({ from, to });
+      }
+    }
   }, [searchParams]);
 
   // -------- Bootstrap filters --------
@@ -371,10 +379,9 @@ const AICallingPage = () => {
       setLoading(true);
       setPage(1);
       try {
-        const [listRes, sumRes, aiSumRes] = await Promise.all([
+        const [listRes, sumRes] = await Promise.all([
           api.get("/call-history", { params: listParams(1) }),
           api.get("/call-history/summary", { params: summaryParams() }),
-          api.get("/call-history/ai-batch-summary", { params: summaryParams() }),
         ]);
         if (cancelled) return;
         setCalls(listRes.data?.calls || []);
@@ -382,7 +389,6 @@ const AICallingPage = () => {
         setHasMore(Boolean(listRes.data?.has_more));
         setPage(1);
         setSummary(sumRes.data || null);
-        setAiBatchSummary(aiSumRes.data?.batch_summary || null);
         setHasLoadedOnce(true);
       } catch (error) {
         console.error("Error fetching call history:", error);
@@ -392,7 +398,6 @@ const AICallingPage = () => {
           setTotal(0);
           setHasMore(false);
           setSummary(null);
-          setAiBatchSummary(null);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -453,33 +458,6 @@ const AICallingPage = () => {
       avgDuration: Number(summary.avg_duration_seconds ?? 0),
     };
   }, [summary, total]);
-
-  const aiStats = useMemo(() => {
-    if (!aiBatchSummary) return null;
-    return {
-      total: Number(aiBatchSummary.total_calls ?? 0),
-      hot: Number(aiBatchSummary.hot_leads ?? 0),
-      mild: Number(aiBatchSummary.mildly_interested ?? 0),
-      not: Number(aiBatchSummary.not_interested ?? 0),
-      voicemail: Number(aiBatchSummary.voicemail_wrong_number ?? 0),
-      bought: Number(aiBatchSummary.already_bought ?? 0),
-      incorrect: Number(aiBatchSummary.system_tags_incorrect ?? 0),
-    };
-  }, [aiBatchSummary]);
-
-  const aiBuckets = useMemo(
-    () =>
-      aiStats
-        ? [
-            { label: "Hot", value: aiStats.hot },
-            { label: "Mild", value: aiStats.mild },
-            { label: "Not Interested", value: aiStats.not },
-            { label: "Voicemail/Wrong #", value: aiStats.voicemail },
-            { label: "Already Bought", value: aiStats.bought },
-          ]
-        : [],
-    [aiStats]
-  );
 
   const fallbackStatuses = ["completed", "no-answer", "busy", "failed"];
   const fallbackDispositions = [
@@ -576,82 +554,6 @@ const AICallingPage = () => {
               ) : null}
               <LoadingOverlay show={isRefetching} />
             </div>
-
-            {/* Batch Summary (AI Structured Extraction) */}
-            <motion.div
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-              className="relative glass-card rounded-xl p-5 mb-6"
-            >
-              <div className="flex items-center justify-between gap-4 flex-wrap">
-                <div>
-                  <h2 className="kicker">Batch Summary (AI Validated)</h2>
-                  <p className="text-xs text-[#A3A3A3] mt-1.5">
-                    Based on structured extraction from transcripts.{" "}
-                    {isInitialLoading
-                      ? "Loading analysis…"
-                      : aiStats?.total
-                        ? `${aiStats.total} calls analyzed.`
-                        : "No AI extractions yet for these filters."}
-                  </p>
-                </div>
-                {aiStats && aiStats.incorrect > 0 && (
-                  <span className="text-xs px-2 py-1 rounded border border-red-500/30 bg-red-900/20 text-red-300">
-                    {aiStats.incorrect} system tags incorrect
-                  </span>
-                )}
-              </div>
-
-              {isInitialLoading ? (
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mt-4">
-                  {Array.from({ length: 5 }).map((_, i) => (
-                    <div key={i} className="rounded-lg border border-white/10 bg-white/5 p-3">
-                      <div className="skeleton-block h-3 w-16 rounded mb-2" />
-                      <div className="skeleton-block h-7 w-10 rounded" />
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mt-4">
-                  {aiBuckets.map((x) => (
-                    <div
-                      key={x.label}
-                      className="rounded-lg border border-white/10 bg-white/5 p-3 transition-colors duration-300 hover:border-[#C5A059]/30 min-w-0 overflow-hidden"
-                    >
-                      <p
-                        className="text-[11px] uppercase tracking-wide text-[#737373] leading-snug break-words line-clamp-2"
-                        title={x.label}
-                      >
-                        {x.label}
-                      </p>
-                      <p
-                        className="text-xl font-display text-white tabular-nums mt-1.5 min-w-0"
-                        title={String(x.value)}
-                      >
-                        {x.value}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <LoadingOverlay show={isRefetching} />
-
-              {Array.isArray(aiBatchSummary?.top_priority_leads) &&
-                aiBatchSummary.top_priority_leads.length > 0 && (
-                  <div className="mt-4 pt-4 border-t border-white/10">
-                    <p className="kicker mb-2">Top priority leads to call first</p>
-                    <ul className="space-y-1 text-sm text-white">
-                      {aiBatchSummary.top_priority_leads.map((s) => (
-                        <li key={s} className="flex items-center gap-2">
-                          <span className="inline-block h-1.5 w-1.5 rounded-full bg-[#C5A059]" />
-                          <span className="break-all">{s}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-            </motion.div>
 
             {/* Filters */}
             <motion.div

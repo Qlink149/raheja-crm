@@ -10,6 +10,7 @@ import {
   parseProjectsPayload,
   buildStatsParams,
   buildVirtualDrillParams,
+  buildAICallingDrillParams,
   formatDashboardNumber,
   REGIONAL_COLORS,
 } from "../lib/adapters/dashboardAdapter";
@@ -201,8 +202,14 @@ const DashboardPage = () => {
   const projectsForGrid = projectList;
 
   const handleDispositionClick = (entry) => {
-    if (!entry?.name) return;
-    navigate(`/virtual-customer?disposition=${encodeURIComponent(entry.name)}&futwork_sync_status=all`);
+    if (!entry?.name || entry.name === "No Disposition") return;
+    const params = buildAICallingDrillParams(
+      entry.name,
+      timeFilter,
+      projectFilter,
+      dateRange
+    );
+    navigate(`/ai-calling?${params.toString()}`);
   };
 
   const handleStatClick = (bucket) => {
@@ -477,7 +484,9 @@ const DashboardPage = () => {
                     data-testid="disposition-chart"
                   >
                     <h3 className="font-serif text-xl text-white mb-2">Disposition Distribution</h3>
-                    <p className="text-[#737373] text-xs mb-4">Click a slice to filter Virtual Customer</p>
+                    <p className="text-[#737373] text-xs mb-4">
+                      Futwork call outcomes · Click a slice to view matching calls in AI Calling
+                    </p>
                     <div className="flex items-center justify-center">
                       <ResponsiveContainer width="100%" height={280}>
                         <PieChart>
@@ -503,7 +512,7 @@ const DashboardPage = () => {
                                 return (
                                   <div className="bg-[#1A1A1A] border border-white/10 rounded-lg p-3 shadow-xl">
                                     <p className="text-[#C5A059] font-medium">{payload[0].name}</p>
-                                    <p className="text-white">{payload[0].value} leads</p>
+                                    <p className="text-white">{payload[0].value} calls</p>
                                   </div>
                                 );
                               }
@@ -537,7 +546,8 @@ const DashboardPage = () => {
                   className="glass-card rounded-lg p-6"
                   data-testid="lead-status-chart"
                 >
-                  <h3 className="font-serif text-xl text-white mb-6">Lead Status Distribution</h3>
+                  <h3 className="font-serif text-xl text-white mb-2">Lead Qualification Distribution</h3>
+                  <p className="text-[#737373] text-xs mb-4">Matches dashboard KPI tiles (lead counts)</p>
                   <div className="flex items-center justify-center">
                     <ResponsiveContainer width="100%" height={300}>
                       <PieChart>

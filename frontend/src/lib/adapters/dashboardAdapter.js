@@ -43,11 +43,30 @@ export function mapLeadSources(stats) {
 
 export function mapStatusBreakdown(stats) {
   if (!stats?.lead_status_stats) return [];
-  return Object.entries(stats.lead_status_stats).map(([name, value], idx) => ({
-    name,
-    value: Number(value) || 0,
-    color: CHART_COLORS[idx % CHART_COLORS.length],
-  }));
+  const colorByName = {
+    Cold: "#3B82F6",
+    Dormant: "#F97316",
+    Warm: "#F59E0B",
+    Hot: "#EF4444",
+    Qualified: "#10B981",
+  };
+  const order = ["Qualified", "Hot", "Warm", "Cold", "Dormant"];
+  const entries = Object.entries(stats.lead_status_stats)
+    .filter(([, v]) => Number(v) > 0)
+    .map(([name, value]) => ({
+      name,
+      value: Number(value) || 0,
+      color: colorByName[name] || CHART_COLORS[0],
+    }));
+  entries.sort((a, b) => {
+    const ai = order.indexOf(a.name);
+    const bi = order.indexOf(b.name);
+    if (ai === -1 && bi === -1) return b.value - a.value;
+    if (ai === -1) return 1;
+    if (bi === -1) return -1;
+    return ai - bi;
+  });
+  return entries;
 }
 
 export function mapDispositionBreakdown(stats) {
@@ -108,6 +127,16 @@ export function parseProjectsPayload(data) {
     };
   }
   return { projects: [], meta: null };
+}
+
+/** Build AI Calling URL params for disposition chart drill-down. */
+export function buildAICallingDrillParams(disposition, timeFilter, projectFilter, dateRange) {
+  const params = new URLSearchParams();
+  if (disposition) params.set("disposition", disposition);
+  const statsParams = buildStatsParams(timeFilter, projectFilter, dateRange);
+  if (statsParams.start_date) params.set("start_date", statsParams.start_date);
+  if (statsParams.end_date) params.set("end_date", statsParams.end_date);
+  return params;
 }
 
 /** Build Virtual Customer URL params for dashboard KPI drill-down. */

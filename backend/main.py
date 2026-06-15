@@ -32,6 +32,7 @@ from app.api.v1 import (
 )
 from app.models.structured_extraction import StructuredDisposition
 from app.services.campaign_service import CampaignService
+from app.utils.futwork_disposition_stats import futwork_disposition_exact as _futwork_disposition_exact
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -339,16 +340,6 @@ def _call_history_filter_query(
         parts.append(date_clause)
 
     return _and_queries(*parts)
-
-
-def _futwork_disposition_exact(value: str) -> Dict[str, Any]:
-    """Exact Futwork disposition match (same logic as disposition filter dropdown)."""
-    return {
-        "$or": [
-            {"disposition": value},
-            {"extracted_data.disposition": value},
-        ]
-    }
 
 
 def _doc_to_call_row(doc: Dict[str, Any]) -> Dict[str, Any]:
