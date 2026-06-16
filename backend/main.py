@@ -28,7 +28,6 @@ from app.api.v1 import (
     marketing,
     notifications,
     tasks,
-    reminders,
     virtual_customer,
 )
 from app.models.structured_extraction import StructuredDisposition
@@ -51,38 +50,15 @@ app.add_middleware(
 )
 
 
-reminder_task = None
-
-
-async def _reminder_scheduler():
-    while True:
-        try:
-            await asyncio.sleep(3600)
-            if db_instance.db is not None:
-                await reminders.process_reminders(db_instance.db)
-        except asyncio.CancelledError:
-            break
-        except Exception as e:
-            logger.error("Reminder scheduler error: %s", e)
-            await asyncio.sleep(60)
-
-
 @app.on_event("startup")
 async def startup_db_client():
-    global reminder_task
     await connect_to_mongo()
     await initialize_db()
-    reminder_task = asyncio.create_task(_reminder_scheduler())
-    if db_instance.db is not None:
-        asyncio.create_task(reminders.process_reminders(db_instance.db))
-    logger.info("Backend started — Raheja Sales Intelligence API (reminder scheduler active)")
+    logger.info("Backend started — Raheja Sales Intelligence API (serverless ready)")
 
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
-    global reminder_task
-    if reminder_task:
-        reminder_task.cancel()
     await close_mongo_connection()
 
 
@@ -145,7 +121,6 @@ app.include_router(
     agents.router, prefix="/api/agents", tags=["Agents"], dependencies=_auth_dep
 )
 app.include_router(tasks.router, prefix="/api", tags=["Tasks"], dependencies=_auth_dep)
-app.include_router(reminders.router, prefix="/api", tags=["Reminders"], dependencies=_auth_dep)
 
 
 def _and_queries(*parts: Optional[Dict[str, Any]]) -> Dict[str, Any]:
