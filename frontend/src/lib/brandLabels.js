@@ -1,5 +1,7 @@
 /** User-visible labels — internal API keys may still use futwork_*. */
 
+import { BRAND } from "./brandConfig";
+
 export const CALLING_ENGINE_NAME = "Calling Engine";
 
 const SOURCE_LABELS = {
@@ -26,7 +28,7 @@ export function sanitizeApiErrorMessage(message) {
 export function sanitizeNotificationText(text) {
   if (text == null || text === "") return text ?? "";
   let s = String(text);
-  s = s.replace(/\bFutwork\s+Agent\b/gi, "Rustomjee AI Sales Agent");
+  s = s.replace(/\bFutwork\s+Agent\b/gi, BRAND.aiAgentLabel);
   for (const [key, label] of Object.entries(SOURCE_LABELS)) {
     s = s.replace(new RegExp(key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), label);
   }

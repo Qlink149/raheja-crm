@@ -16,6 +16,14 @@ from ...services.campaign_service import CampaignService
 from ...services.assignment_service import AssignmentService, rep_lead_filter
 from ...models.lead import LeadDetail
 from ...core.time_utils import serialize_datetime_utc
+from ...core.preview_access import (
+    assert_lead_preview_access,
+    assert_vc_list_blocked,
+    assert_vc_mutations_blocked,
+    is_vc_preview_tier,
+    preview_disposition,
+)
+from ...utils.lead_call_history import build_lead_call_history_query
 from ...services.structured_ai_service import NOT_WORTHY_MESSAGE
 
 logger = logging.getLogger(__name__)
@@ -129,6 +137,7 @@ async def list_leads(
     current_user: dict = Depends(get_current_user),
     db=Depends(get_db),
 ):
+    assert_vc_list_blocked()
     service = LeadService(db)
     filters = _build_list_filters(
         budget_category=budget_category,
@@ -182,6 +191,10 @@ async def get_leads_count(
     current_user: dict = Depends(get_current_user),
     db=Depends(get_db),
 ):
+    if is_vc_preview_tier():
+        disp = (disposition or "").strip().lower()
+        if disp != preview_disposition().lower():
+            assert_vc_list_blocked()
     service = LeadService(db)
     filters = _build_list_filters(
         budget_category=budget_category,
@@ -222,7 +235,8 @@ async def clear_all_leads(db = Depends(get_db)):
 
 
 @router.get("/{lead_id}", response_model=LeadDetail)
-async def get_lead(lead_id: str, db = Depends(get_db)):
+async def get_lead(lead_id: str, current_user: dict = Depends(get_current_user), db = Depends(get_db)):
+    await assert_lead_preview_access(db, lead_id, current_user)
     service = LeadService(db)
     lead = await service.get_lead_by_id(lead_id)
     if not lead:
@@ -237,51 +251,50 @@ async def get_lead(lead_id: str, db = Depends(get_db)):
 
 
 @router.get("/{lead_id}/calls")
-async def get_lead_calls(lead_id: str, db = Depends(get_db)):
+async def get_lead_calls(lead_id: str, current_user: dict = Depends(get_current_user), db = Depends(get_db)):
     """Return all call entries linked to this lead (from call_history + leads collections)."""
+    await assert_lead_preview_access(db, lead_id, current_user)
     # Find lead by its UUID 'id' field
     lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
 
     mobile_digits = lead.get("mobile_digits", "").strip()
-    mobile = lead.get("mobile", "")
 
     calls = []
 
-    # 1. Query dedicated call_history collection
-    if mobile_digits:
-        history_docs = await db.call_history.find(
-            {"mobile_digits": mobile_digits},
-            {"_id": 0}
-        ).sort("created_at", -1).to_list(50)
+    # 1. Query dedicated call_history collection (lead-linked + matching customer phone)
+    history_docs = await db.call_history.find(
+        build_lead_call_history_query(lead_id, lead),
+        {"_id": 0},
+    ).sort("created_at", -1).to_list(50)
 
-        for d in history_docs:
-            se = d.get("structured_extraction") or {}
-            ai_summary = ""
-            if isinstance(se, dict) and se.get("call_summary"):
-                ai_summary = str(se.get("call_summary"))
-            elif d.get("extracted_data"):
-                ai_summary = (d.get("extracted_data") or {}).get("call_summary", "") or ""
-            created_iso, call_iso = _serialize_call_timestamps(d)
-            ai_worthy = d.get("ai_worthy") is not False
-            if not ai_worthy and ai_summary and ai_summary.strip() != NOT_WORTHY_MESSAGE:
-                ai_worthy = True
-            calls.append({
-                "lead_id": lead_id,
-                "call_sid": d.get("id") or d.get("call_sid") or "",
-                "created_at": created_iso,
-                "call_date": call_iso,
-                "status": d.get("status", ""),
-                "disposition": d.get("disposition", ""),
-                "duration": int(d.get("duration", 0) or 0),
-                "recording_url": d.get("recording_url", ""),
-                "transcript": d.get("transcript", ""),
-                "ai_call_summary": ai_summary,
-                "ai_worthy": ai_worthy,
-                "campaign": d.get("campaign", ""),
-                "structured_extraction": se if isinstance(se, dict) else {},
-            })
+    for d in history_docs:
+        se = d.get("structured_extraction") or {}
+        ai_summary = ""
+        if isinstance(se, dict) and se.get("call_summary"):
+            ai_summary = str(se.get("call_summary"))
+        elif d.get("extracted_data"):
+            ai_summary = (d.get("extracted_data") or {}).get("call_summary", "") or ""
+        created_iso, call_iso = _serialize_call_timestamps(d)
+        ai_worthy = d.get("ai_worthy") is not False
+        if not ai_worthy and ai_summary and ai_summary.strip() != NOT_WORTHY_MESSAGE:
+            ai_worthy = True
+        calls.append({
+            "lead_id": lead_id,
+            "call_sid": d.get("id") or d.get("call_sid") or "",
+            "created_at": created_iso,
+            "call_date": call_iso,
+            "status": d.get("status", ""),
+            "disposition": d.get("disposition", ""),
+            "duration": int(d.get("duration", 0) or 0),
+            "recording_url": d.get("recording_url", ""),
+            "transcript": d.get("transcript", ""),
+            "ai_call_summary": ai_summary,
+            "ai_worthy": ai_worthy,
+            "campaign": d.get("campaign", ""),
+            "structured_extraction": se if isinstance(se, dict) else {},
+        })
 
     # 2. Also check leads collection for embedded call data (from webhook upserts to leads doc)
     if not calls and mobile_digits:
@@ -508,6 +521,7 @@ async def assign_lead(
     _admin: dict = Depends(require_admin),
     db=Depends(get_db),
 ):
+    assert_vc_mutations_blocked()
     assigned_user_id = payload.get("assigned_user_id")
     if not assigned_user_id:
         raise HTTPException(status_code=400, detail="assigned_user_id is required")
@@ -526,6 +540,7 @@ async def auto_assign_lead(
     _admin: dict = Depends(require_admin),
     db=Depends(get_db),
 ):
+    assert_vc_mutations_blocked()
     rep, message = await AssignmentService(db).auto_assign_lead(lead_id)
     if not rep:
         raise HTTPException(status_code=400, detail=message)
@@ -545,6 +560,7 @@ async def update_sales_qualification(
     current_user: dict = Depends(get_current_user),
     db=Depends(get_db),
 ):
+    assert_vc_mutations_blocked()
     value = (payload.get("sales_qualification") or "").strip()
     if value and value not in SALES_QUALIFICATION_VALUES:
         raise HTTPException(
@@ -577,6 +593,7 @@ async def update_sales_qualification(
 
 @router.patch("/{lead_id}/disposition")
 async def update_disposition(lead_id: str, payload: dict, db = Depends(get_db)):
+    assert_vc_mutations_blocked()
     disposition = payload.get("disposition")
     if not disposition:
         raise HTTPException(status_code=400, detail="Disposition is required")

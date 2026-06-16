@@ -3,10 +3,13 @@ import "@/App.css";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { Toaster } from "./components/ui/sonner";
+import PremiumLockedPage from "./components/shared/PremiumLockedPage";
+import { isFeatureLocked, isVcPreviewMode } from "./lib/featureAccess";
 
 const LoginPage = lazy(() => import("./pages/LoginPage"));
 const DashboardPage = lazy(() => import("./pages/DashboardPage"));
 const VirtualCustomerPage = lazy(() => import("./pages/VirtualCustomerPage"));
+const VirtualCustomerPreview = lazy(() => import("./pages/VirtualCustomerPreview"));
 const CustomerDetailPage = lazy(() => import("./pages/CustomerDetailPage"));
 const CampaignsPage = lazy(() => import("./pages/CampaignsPage"));
 const AICallingPage = lazy(() => import("./pages/AICallingPage"));
@@ -65,6 +68,13 @@ const PublicRoute = ({ children }) => {
   return children;
 };
 
+const FeatureGate = ({ featureKey, lockedTitle, children }) =>
+  isFeatureLocked(featureKey) ? (
+    <PremiumLockedPage title={lockedTitle} />
+  ) : (
+    children
+  );
+
 function AppRoutes() {
   return (
     <Routes>
@@ -112,9 +122,11 @@ function AppRoutes() {
         <Route
           path="virtual-customer"
           element={
-            <PageSuspense>
-              <VirtualCustomerPage />
-            </PageSuspense>
+            <FeatureGate featureKey="virtualCustomer" lockedTitle="Virtual Customer">
+              <PageSuspense>
+                {isVcPreviewMode() ? <VirtualCustomerPreview /> : <VirtualCustomerPage />}
+              </PageSuspense>
+            </FeatureGate>
           }
         />
         <Route
@@ -147,9 +159,11 @@ function AppRoutes() {
           path="sales-dashboard"
           element={
             <AdminRoute>
-              <PageSuspense>
-                <SalesDashboardPage />
-              </PageSuspense>
+              <FeatureGate featureKey="salesDashboard" lockedTitle="Sales Dashboard">
+                <PageSuspense>
+                  <SalesDashboardPage />
+                </PageSuspense>
+              </FeatureGate>
             </AdminRoute>
           }
         />
@@ -157,18 +171,22 @@ function AppRoutes() {
           path="marketing-dashboard"
           element={
             <AdminRoute>
-              <PageSuspense>
-                <MarketingDashboardPage />
-              </PageSuspense>
+              <FeatureGate featureKey="marketingDashboard" lockedTitle="Marketing">
+                <PageSuspense>
+                  <MarketingDashboardPage />
+                </PageSuspense>
+              </FeatureGate>
             </AdminRoute>
           }
         />
         <Route
           path="notifications"
           element={
-            <PageSuspense>
-              <NotificationsPage />
-            </PageSuspense>
+            <FeatureGate featureKey="notifications" lockedTitle="Notifications">
+              <PageSuspense>
+                <NotificationsPage />
+              </PageSuspense>
+            </FeatureGate>
           }
         />
         <Route

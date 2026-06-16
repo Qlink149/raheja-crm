@@ -37,6 +37,7 @@ const formatDate = (dateStr) => formatDateTimeIST(dateStr);
 const DISPOSITION_STYLES = {
   Interested: "bg-emerald-900/30 text-emerald-300 border-emerald-500/30",
   "Partially Interested": "bg-cyan-900/30 text-cyan-300 border-cyan-500/30",
+  "Site Visit": "bg-indigo-900/30 text-indigo-300 border-indigo-500/30",
   "Not Interested": "bg-red-900/30 text-red-300 border-red-500/30",
   Busy: "bg-yellow-900/30 text-yellow-300 border-yellow-500/30",
   Dropped: "bg-orange-900/30 text-orange-300 border-orange-500/30",

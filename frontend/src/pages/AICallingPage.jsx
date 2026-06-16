@@ -68,6 +68,7 @@ const formatDate = (dateStr) => formatDateTimeIST(dateStr);
 const DISPOSITION_STYLES = {
   Interested: "bg-emerald-900/30 text-emerald-300 border-emerald-500/30",
   "Partially Interested": "bg-cyan-900/30 text-cyan-300 border-cyan-500/30",
+  "Site Visit": "bg-indigo-900/30 text-indigo-300 border-indigo-500/30",
   "Not Interested": "bg-red-900/30 text-red-300 border-red-500/30",
   Busy: "bg-yellow-900/30 text-yellow-300 border-yellow-500/30",
   Dropped: "bg-orange-900/30 text-orange-300 border-orange-500/30",
@@ -454,7 +455,7 @@ const AICallingPage = () => {
       total: Number(summary.total_calls ?? total ?? 0),
       completed: Number(summary.completed ?? 0),
       interested: Number(summary.interested ?? 0),
-      partiallyInterested: Number(summary.partially_interested ?? 0),
+      siteVisit: Number(summary.site_visit ?? 0),
       avgDuration: Number(summary.avg_duration_seconds ?? 0),
     };
   }, [summary, total]);
@@ -463,6 +464,7 @@ const AICallingPage = () => {
   const fallbackDispositions = [
     "Interested",
     "Partially Interested",
+    "Site Visit",
     "Not Interested",
     "Busy",
     "Dropped",
@@ -509,7 +511,7 @@ const AICallingPage = () => {
             AI Calling Engine
           </h1>
           <p className="text-[#A1A1AA]">
-            Live record of every AI-placed call for Rustomjee campaigns
+            Live record of every AI-placed call for Raheja campaigns
           </p>
         </motion.div>
 
@@ -537,8 +539,8 @@ const AICallingPage = () => {
                   />
                   <StatTile
                     icon={Sparkles}
-                    label="Partially Interested"
-                    value={stats.partiallyInterested}
+                    label="Site Visit"
+                    value={stats.siteVisit}
                     tone="cyan"
                     delay={0.15}
                   />
@@ -731,7 +733,11 @@ const AICallingPage = () => {
                       (h) => (
                         <span
                           key={h}
-                          className="text-[11px] uppercase tracking-widest text-[#C5A059] font-semibold"
+                          className={`text-[11px] uppercase text-[#C5A059] font-semibold whitespace-nowrap${
+                            h === "Duration"
+                              ? " tracking-wide -translate-x-5"
+                              : " tracking-widest"
+                          }`}
                         >
                           {h}
                         </span>

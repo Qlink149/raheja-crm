@@ -29,6 +29,7 @@ from app.api.v1 import (
     notifications,
     tasks,
     reminders,
+    virtual_customer,
 )
 from app.models.structured_extraction import StructuredDisposition
 from app.services.campaign_service import CampaignService
@@ -74,7 +75,7 @@ async def startup_db_client():
     reminder_task = asyncio.create_task(_reminder_scheduler())
     if db_instance.db is not None:
         asyncio.create_task(reminders.process_reminders(db_instance.db))
-    logger.info("Backend started — Rustomjee Sales Intelligence API (reminder scheduler active)")
+    logger.info("Backend started — Raheja Sales Intelligence API (reminder scheduler active)")
 
 
 @app.on_event("shutdown")
@@ -87,7 +88,7 @@ async def shutdown_db_client():
 
 @app.get("/")
 async def root():
-    return {"status": "ok", "service": "rustomjee-sales-api"}
+    return {"status": "ok", "service": "raheja-sales-api"}
 
 
 @app.get("/health")
@@ -110,6 +111,12 @@ app.include_router(
 )
 app.include_router(
     leads.router, prefix="/api/leads", tags=["Leads"], dependencies=_auth_dep
+)
+app.include_router(
+    virtual_customer.router,
+    prefix="/api/virtual-customer",
+    tags=["Virtual Customer"],
+    dependencies=_auth_dep,
 )
 app.include_router(
     dashboard.router, prefix="/api/dashboard", tags=["Dashboard"], dependencies=_auth_dep
@@ -347,7 +354,7 @@ def _doc_to_call_row(doc: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "id": doc.get("id", doc.get("call_sid", "")),
         "customer_name": doc.get("customer_name", "Unknown"),
-        "phone": doc.get("phone", ""),
+        "phone": doc.get("phone", "") or doc.get("mobile_digits", ""),
         "status": doc.get("status", ""),
         "disposition": doc.get("disposition", ""),
         "duration": int(doc.get("duration", 0) or 0),
@@ -437,13 +444,13 @@ async def get_call_history_summary(
             {"status": {"$regex": r"^completed$", "$options": "i"}},
         )
         interested_q = _and_queries(base, _futwork_disposition_exact("Interested"))
-        partially_interested_q = _and_queries(
-            base, _futwork_disposition_exact("Partially Interested")
+        site_visit_q = _and_queries(
+            base, _futwork_disposition_exact("Site Visit")
         )
 
         completed = await db.call_history.count_documents(completed_q)
         interested = await db.call_history.count_documents(interested_q)
-        partially_interested = await db.call_history.count_documents(partially_interested_q)
+        site_visit = await db.call_history.count_documents(site_visit_q)
 
         connected_q = _and_queries(base, {"duration": {"$gt": 0}})
         connected_calls = await db.call_history.count_documents(connected_q)
@@ -460,7 +467,7 @@ async def get_call_history_summary(
             "total_calls": total,
             "completed": completed,
             "interested": interested,
-            "partially_interested": partially_interested,
+            "site_visit": site_visit,
             "connected_calls": connected_calls,
             "avg_duration_seconds": round(avg_duration) if connected_calls else 0,
         }
@@ -470,7 +477,7 @@ async def get_call_history_summary(
             "total_calls": 0,
             "completed": 0,
             "interested": 0,
-            "partially_interested": 0,
+            "site_visit": 0,
             "connected_calls": 0,
             "avg_duration_seconds": 0,
         }
@@ -724,7 +731,7 @@ async def get_call_history(
                     {
                         "id": lead.get("id", ""),
                         "customer_name": lead.get("full_name", "Unknown"),
-                        "phone": lead.get("mobile", ""),
+                        "phone": lead.get("mobile", "") or lead.get("mobile_digits", ""),
                         "status": call_status,
                         "disposition": lead.get("disposition", ""),
                         "duration": int(lead.get("call_duration", 0) or 0),

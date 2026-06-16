@@ -17,6 +17,7 @@ from ..models.structured_extraction import (
     UnifiedStructuredExtraction,
 )
 from ..utils.csv_processor import get_intent_category
+from ..utils.lead_call_history import build_lead_call_history_query
 
 logger = logging.getLogger(__name__)
 
@@ -186,7 +187,7 @@ _AGENT_LABEL_PREFIXES = frozenset(
         "system",
         "bot",
         "प्रिया",
-        "rustomjee",
+        "raheja",
     }
 )
 
@@ -440,13 +441,13 @@ class StructuredAIService:
         transcript: str,
     ) -> List[Dict[str, str]]:
         system_prompt = (
-            "You are an expert real estate analyst for Rustomjee Developers (Mumbai / Thane markets). "
+            f"You are an expert real estate analyst for {settings.BRAND_NAME} Developers (Mumbai / Thane markets). "
             "Analyze the call transcript and output STRICT JSON only with exactly these keys:\n"
-            "- budget_match (boolean): true if stated budget aligns with a typical Rustomjee purchase (crore-scale).\n"
+            f"- budget_match (boolean): true if stated budget aligns with a typical {settings.BRAND_NAME} purchase (crore-scale).\n"
             "- budget_category (string): one of: <1 Cr | 1-2 Cr | 2-5 Cr | 5 Cr+ | Other | Profiling in Progress\n"
             "- stated_budget_cr (string): exact budget in crore if the customer stated a number "
             '(e.g. "12" for twelve crore); empty string if not stated\n'
-            "- area_match (boolean): true if preferred area matches Rustomjee focus (Mumbai/Thane/nearby).\n"
+            f"- area_match (boolean): true if preferred area matches {settings.BRAND_NAME} focus (Mumbai/Thane/nearby).\n"
             "- location_category (string): one of: Thane | Bandra/BKC | South Mumbai | Suburbs | Other | Profiling in Progress\n"
             "- timeline_match (boolean): true if realistic purchase timeline within ~12 months or clear near-term intent.\n"
             "- intent_category (string): one of: Other | Investor | Home Seeker | Profiling in Progress\n"
@@ -464,7 +465,7 @@ class StructuredAIService:
             "Distinct from intent_category.\n"
             "- current_residence_type (string): current housing if stated "
             '(e.g. Rented, Owned, Living with family); else empty.\n'
-            "- project_interest (string): Rustomjee or other project name if stated; else empty.\n"
+            f"- project_interest (string): {settings.BRAND_NAME} or other project name if stated; else empty.\n"
             "Also include schema_version: 2, lead_name, phone (masked like ******1234), system_tag_correct (boolean), "
             "key_signals (array of short strings).\n"
             "Extract free-text fields ONLY from what is explicitly stated in THIS call transcript; "
@@ -633,11 +634,11 @@ class StructuredAIService:
 
     async def _latest_worthy_call_doc_for_lead(self, lead: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Most recent call_history row for this lead that passes worthy_call_gate (same bar as summaries)."""
-        mobile_digits = (lead.get("mobile_digits") or "").strip()
-        if not mobile_digits:
+        lead_id = str(lead.get("id") or "").strip()
+        if not lead_id:
             return None
         docs = (
-            await self.db.call_history.find({"mobile_digits": mobile_digits})
+            await self.db.call_history.find(build_lead_call_history_query(lead_id, lead))
             .sort("created_at", -1)
             .to_list(40)
         )
@@ -679,7 +680,7 @@ class StructuredAIService:
                     {
                         "role": "system",
                         "content": (
-                            "You are a senior real estate sales strategist for Rustomjee properties, "
+                            f"You are a senior real estate sales strategist for {settings.BRAND_NAME} properties, "
                             "one of Mumbai's most prestigious real estate developers since 1996. "
                             "You produce concise, actionable, and data-driven insights."
                         ),
@@ -743,7 +744,7 @@ class StructuredAIService:
         eff_refresh = refresh or had_insufficient
 
         prompt = (
-            "Suggest the single best strategic next move for the Rustomjee sales team to convert this lead. "
+            f"Suggest the single best strategic next move for the {settings.BRAND_NAME} sales team to convert this lead. "
             "Base your recommendation primarily on the call transcript and structured_extraction signals; "
             "use CRM temperature, budget, and project interest only when they add concrete detail. "
             "Be specific and immediately actionable (e.g., 'Schedule a site visit to Urban Woods this weekend, "

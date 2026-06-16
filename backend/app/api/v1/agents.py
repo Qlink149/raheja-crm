@@ -8,9 +8,12 @@ These records are for future use or admin reference only.
 
 from fastapi import APIRouter, Depends
 from typing import List, Dict, Any
+from ...core.config import settings
 from ...core.database import get_db
 
 router = APIRouter()
+
+brand = settings.BRAND_NAME
 
 # Default AI agents seeded if collection is empty
 DEFAULT_AGENTS = [
@@ -20,14 +23,14 @@ DEFAULT_AGENTS = [
         "description": "Aggressive closing agent for hot leads",
         "color": "#C5A059",
         "prompt": (
-            "You are an expert real estate sales closer for Rustomjee properties. Your goal is to:\n"
+            f"You are an expert real estate sales closer for {brand} properties. Your goal is to:\n"
             "1. Build rapport quickly and understand the customer's immediate needs\n"
             "2. Present compelling property options based on their preferences\n"
             "3. Create urgency with limited-time offers and availability\n"
             "4. Handle objections professionally and guide towards site visit booking\n"
             "5. Always maintain a professional yet persuasive tone\n\n"
             "Key talking points:\n"
-            "- Rustomjee's legacy of quality construction since 1996\n"
+            f"- {brand}'s legacy of quality construction\n"
             "- Prime locations across Mumbai\n"
             "- Flexible payment plans and bank tie-ups\n"
             "- Ready possession and under-construction options available"
@@ -39,7 +42,7 @@ DEFAULT_AGENTS = [
         "description": "Gentle follow-up agent for warm leads",
         "color": "#10B981",
         "prompt": (
-            "You are a friendly real estate consultant for Rustomjee properties. Your approach is:\n"
+            f"You are a friendly real estate consultant for {brand} properties. Your approach is:\n"
             "1. Check in on the customer's property search progress\n"
             "2. Provide valuable market insights and updates\n"
             "3. Share new project launches and offers\n"
@@ -58,7 +61,7 @@ DEFAULT_AGENTS = [
         "description": "Win-back agent for cold/dormant leads",
         "color": "#3B82F6",
         "prompt": (
-            "You are a customer win-back specialist for Rustomjee properties. Your strategy is:\n"
+            f"You are a customer win-back specialist for {brand} properties. Your strategy is:\n"
             "1. Acknowledge the time gap since last interaction\n"
             "2. Understand if their property needs have changed\n"
             "3. Present new options that might interest them\n"

@@ -9,8 +9,10 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from ..core.time_utils import iso_utc_now, utc_now
 
+from ..core.config import settings
+
 CALLING_ENGINE_NAME = "Calling Engine"
-WHITELABEL_AGENT_LABEL = "Rustomjee AI Sales Agent"
+WHITELABEL_AGENT_LABEL = settings.WHITELABEL_AGENT_DISPLAY_NAME
 
 _SOURCE_LABELS = {
     "Futwork CSV Import": "Platform Pipeline",

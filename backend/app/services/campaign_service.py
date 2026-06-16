@@ -43,7 +43,7 @@ def resolve_agent_name(agent_id: str) -> str:
     return agent_id
 
 
-WHITELABEL_AGENT_DISPLAY_NAME = "Rustomjee AI Sales Agent"
+WHITELABEL_AGENT_DISPLAY_NAME = settings.WHITELABEL_AGENT_DISPLAY_NAME
 
 
 def mask_futwork_agent_branding(name: Optional[str]) -> str:

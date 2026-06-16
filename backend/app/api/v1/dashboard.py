@@ -7,7 +7,13 @@ from ...services.qualification_buckets import (
     build_base_query,
     bucket_query,
 )
-from ...utils.futwork_disposition_stats import aggregate_futwork_disposition_stats
+from ...utils.futwork_disposition_stats import (
+    aggregate_futwork_disposition_stats,
+    aggregate_avg_duration_by_disposition,
+    build_call_history_match_query,
+    resolve_project_call_correlation,
+    futwork_disposition_exact,
+)
 from .analytics import (
     _is_invalid_rep_name,
     _merge_query_with_valid_projects,
@@ -29,9 +35,7 @@ async def get_dashboard_stats(
 
     def merge(extra: dict) -> dict:
         return {**base_query, **extra}
-
-    total_leads = await db.leads.count_documents(base_query)
-
+    # total_leads is now computed from call_history distinct numbers below
     qualified_leads = await db.leads.count_documents(
         bucket_query(base_query, "qualified")
     )
@@ -74,6 +78,57 @@ async def get_dashboard_stats(
         start_date=start_date,
         end_date=end_date,
     )
+    
+    disposition_avg_duration = await aggregate_avg_duration_by_disposition(
+        db,
+        project=project,
+        days=days,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+    lead_ids, mobile_digits_list = [], []
+    if project and project != "all":
+        lead_ids, mobile_digits_list = await resolve_project_call_correlation(db, project)
+
+    ch_query = build_call_history_match_query(
+        project=project,
+        days=days,
+        start_date=start_date,
+        end_date=end_date,
+        lead_ids=lead_ids or None,
+        mobile_digits_list=mobile_digits_list or None,
+    )
+    
+    total_calls = await db.call_history.count_documents(ch_query)
+    
+    total_leads_list = await db.call_history.distinct("mobile_digits", ch_query)
+    total_leads = len(total_leads_list)
+    
+    pipeline = [
+        {"$match": {**ch_query, "duration": {"$gt": 0}}},
+        {"$group": {
+            "_id": None, 
+            "total_duration": {"$sum": "$duration"}, 
+            "avg_duration": {"$avg": "$duration"},
+            "total_billed": {"$sum": {"$ceil": {"$divide": ["$duration", 60]}}}
+        }}
+    ]
+    ch_agg = await db.call_history.aggregate(pipeline).to_list(1)
+    
+    total_duration_seconds = 0
+    avg_call_duration = 0
+    total_billed_minutes = 0
+    if ch_agg:
+        total_duration_seconds = ch_agg[0].get("total_duration") or 0
+        avg_call_duration = round(ch_agg[0].get("avg_duration") or 0)
+        total_billed_minutes = int(ch_agg[0].get("total_billed") or 0)
+    
+    site_visit_query = {**ch_query, **futwork_disposition_exact("Site Visit")}
+    site_visits = await db.call_history.count_documents(site_visit_query)
+    
+    interested_query = {**ch_query, **futwork_disposition_exact("Interested")}
+    interested_calls = await db.call_history.count_documents(interested_query)
 
     return {
         "total_leads": total_leads,
@@ -85,11 +140,17 @@ async def get_dashboard_stats(
         "lost_leads": lost_leads,
         "dormant_leads": dormant_leads,
         "qualified_leads": qualified_leads,
+        "total_calls": total_calls,
+        "total_billed_minutes": total_billed_minutes,
+        "avg_call_duration": avg_call_duration,
+        "site_visits": site_visits,
+        "interested_calls": interested_calls,
         "lead_status_stats": lead_status_stats,
         "lead_source_stats": lead_source_stats,
         "regional_demand": regional_demand,
         "budget_distribution": budget_distribution,
         "disposition_stats": disposition_stats,
+        "disposition_avg_duration": disposition_avg_duration,
     }
 
 

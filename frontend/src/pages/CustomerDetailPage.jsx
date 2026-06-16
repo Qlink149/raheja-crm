@@ -82,6 +82,7 @@ const CustomerDetailPage = () => {
   useEffect(() => {
     if (!id) return;
     let mounted = true;
+    setLeadCalls([]);
     setCallsLoading(true);
     (async () => {
       try {
@@ -100,11 +101,17 @@ const CustomerDetailPage = () => {
   }, [id]);
 
   const fetchLeadDetail = async () => {
+    setLoading(true);
     try {
       const response = await api.get(`/leads/${id}`);
       setLead(response.data);
     } catch (error) {
       console.error("Error fetching lead:", error);
+      if (error?.response?.status === 403) {
+        toast.error("This lead is locked. Contact the Clara team to unlock Virtual Customer.");
+        navigate("/virtual-customer", { replace: true });
+        return;
+      }
       toast.error("Failed to load customer details");
     } finally {
       setLoading(false);
@@ -175,7 +182,7 @@ const CustomerDetailPage = () => {
     const customerName = lead?.first_name && lead.first_name !== "" ? lead.first_name : "there";
     const projectName = lead?.project && lead.project !== "" ? lead.project : "our premium properties";
     const message = encodeURIComponent(
-      `Hello ${customerName}! I'm reaching out from Rustomjee regarding ${projectName}. Based on your interest, I'd love to share some exciting options that match your preferences. Would you be available for a quick call?`
+      `Hello ${customerName}! I'm reaching out from Raheja regarding ${projectName}. Based on your interest, I'd love to share some exciting options that match your preferences. Would you be available for a quick call?`
     );
     window.open(`https://wa.me/?text=${message}`, "_blank");
     toast.success("WhatsApp message prepared!", {

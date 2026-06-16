@@ -11,8 +11,14 @@ class DashboardStats(BaseModel):
     lost_leads: int
     dormant_leads: int
     qualified_leads: int = 0
+    total_calls: int = 0
+    total_billed_minutes: int = 0
+    avg_call_duration: int = 0
+    site_visits: int = 0
+    interested_calls: int = 0
     lead_status_stats: Dict[str, int]
     lead_source_stats: Dict[str, int]
     regional_demand: Dict[str, int]
     budget_distribution: Dict[str, int]
     disposition_stats: Dict[str, int] = {}
+    disposition_avg_duration: Dict[str, float] = {}

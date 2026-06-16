@@ -14,7 +14,7 @@ router = APIRouter()
 _SEED_SPENDS: List[Dict[str, Any]] = [
     {
         "id": "seed-mkt-google-1",
-        "project": "Rustomjee ECR",
+        "project": "Raheja ECR",
         "channel": "google_ads",
         "amount": 85000.0,
         "leads_generated": 42,
@@ -25,7 +25,7 @@ _SEED_SPENDS: List[Dict[str, Any]] = [
     },
     {
         "id": "seed-mkt-meta-1",
-        "project": "Rustomjee ECR",
+        "project": "Raheja ECR",
         "channel": "meta_ads",
         "amount": 120000.0,
         "leads_generated": 68,
@@ -36,7 +36,7 @@ _SEED_SPENDS: List[Dict[str, Any]] = [
     },
     {
         "id": "seed-mkt-print-1",
-        "project": "Rustomjee Bandra",
+        "project": "Raheja Bandra",
         "channel": "newspaper",
         "amount": 45000.0,
         "leads_generated": 18,
@@ -47,7 +47,7 @@ _SEED_SPENDS: List[Dict[str, Any]] = [
     },
     {
         "id": "seed-mkt-events-1",
-        "project": "Rustomjee Bandra",
+        "project": "Raheja Bandra",
         "channel": "events",
         "amount": 75000.0,
         "leads_generated": 35,
@@ -58,7 +58,7 @@ _SEED_SPENDS: List[Dict[str, Any]] = [
     },
     {
         "id": "seed-mkt-wati-1",
-        "project": "Rustomjee ECR",
+        "project": "Raheja ECR",
         "channel": "wati",
         "amount": 25000.0,
         "leads_generated": 52,
@@ -69,7 +69,7 @@ _SEED_SPENDS: List[Dict[str, Any]] = [
     },
     {
         "id": "seed-mkt-google-2",
-        "project": "Rustomjee Bandra",
+        "project": "Raheja Bandra",
         "channel": "google_ads",
         "amount": 62000.0,
         "leads_generated": 28,

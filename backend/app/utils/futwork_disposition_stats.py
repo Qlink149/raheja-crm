@@ -11,6 +11,7 @@ _IST = ZoneInfo("Asia/Kolkata")
 _DISPOSITION_CANONICAL: Dict[str, str] = {
     "incomplete conversation": "Incomplete Conversation",
     "no answer": "No Answer",
+    "na": "No Answer",
     "not interested": "Not Interested",
     "partially interested": "Partially Interested",
     "interested": "Interested",
@@ -197,3 +198,61 @@ def futwork_disposition_exact(value: str) -> Dict[str, Any]:
             {"extracted_data.disposition": value},
         ]
     }
+
+
+async def aggregate_avg_duration_by_disposition(
+    db,
+    *,
+    project: Optional[str] = None,
+    days: Optional[int] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+) -> Dict[str, float]:
+    """Group call_history by Futwork disposition and compute average duration."""
+    lead_ids: List[str] = []
+    mobile_digits_list: List[str] = []
+    if project and project != "all":
+        lead_ids, mobile_digits_list = await resolve_project_call_correlation(db, project)
+        if not lead_ids and not mobile_digits_list:
+            return {}
+
+    match_query = build_call_history_match_query(
+        project=project,
+        days=days,
+        start_date=start_date,
+        end_date=end_date,
+        lead_ids=lead_ids or None,
+        mobile_digits_list=mobile_digits_list or None,
+    )
+
+    pipeline: List[Dict[str, Any]] = []
+    
+    # Exclude 0 duration calls to get the true "connected" average per disposition
+    query_with_duration = {**match_query, "duration": {"$gt": 0}} if match_query else {"duration": {"$gt": 0}}
+    pipeline.append({"$match": query_with_duration})
+
+    pipeline.extend(
+        [
+            {"$group": {
+                "_id": "$disposition", 
+                "total_duration": {"$sum": "$duration"},
+                "count": {"$sum": 1}
+            }},
+        ]
+    )
+
+    rows = await db.call_history.aggregate(pipeline).to_list(length=100)
+    
+    sums: Dict[str, float] = {}
+    counts: Dict[str, int] = {}
+    for row in rows:
+        label = _normalize_disposition_label(row.get("_id"))
+        sums[label] = sums.get(label, 0.0) + float(row.get("total_duration") or 0)
+        counts[label] = counts.get(label, 0) + int(row.get("count") or 0)
+        
+    out: Dict[str, float] = {}
+    for label in sums:
+        out[label] = sums[label] / counts[label] if counts[label] > 0 else 0.0
+        
+    return out
+

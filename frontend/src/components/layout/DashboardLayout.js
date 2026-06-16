@@ -3,6 +3,8 @@ import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useAuth } from '../../context/AuthContext';
 import NotificationBell from './NotificationBell';
+import { BRAND } from '../../lib/brandConfig';
+import { isPathLocked, isPathPreview } from '../../lib/featureAccess';
 import {
   LayoutDashboard,
   Users,
@@ -19,6 +21,7 @@ import {
   BarChart3,
   UserCircle,
   TrendingUp,
+  Lock,
 } from 'lucide-react';
 
 const DashboardLayout = () => {
@@ -72,41 +75,69 @@ const DashboardLayout = () => {
     setDarkMode(!darkMode);
   };
 
+  const renderNavLink = (item, onNavigate) => {
+    const locked = isPathLocked(item.path);
+    const preview = isPathPreview(item.path);
+    return (
+      <NavLink
+        key={item.path}
+        to={item.path}
+        onClick={onNavigate}
+        aria-label={
+          preview
+            ? `${item.label} (preview)`
+            : locked
+              ? `${item.label} (premium feature)`
+              : item.label
+        }
+        className={({ isActive }) =>
+          `flex items-center gap-3 px-6 py-3 text-sm transition-all ${
+            locked ? 'opacity-70 ' : ''
+          }${
+            isActive
+              ? 'text-[#C5A059] bg-[#C5A059]/10 border-r-2 border-[#C5A059]'
+              : darkMode
+                ? 'text-[#A1A1AA] hover:text-white hover:bg-white/5'
+                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+          }`
+        }
+        data-testid={`nav-${item.label.toLowerCase().replace(' ', '-')}`}
+      >
+        <item.icon size={20} strokeWidth={1.5} />
+        <span className="flex-1">{item.label}</span>
+        {preview ? (
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#C5A059]/20 text-[#C5A059] font-medium flex-shrink-0">
+            Preview
+          </span>
+        ) : null}
+        {locked ? <Lock size={14} className="text-[#C5A059]/70 flex-shrink-0" /> : null}
+      </NavLink>
+    );
+  };
+
   return (
     <div className={`min-h-screen flex ${darkMode ? 'bg-[#0A0A0A]' : 'bg-gray-100'}`}>
       {/* Sidebar - Desktop */}
       <aside className={`hidden lg:flex flex-col w-64 ${darkMode ? 'bg-[#0A0A0A] border-white/10' : 'bg-white border-gray-200'} border-r fixed h-full`}>
         {/* Logo */}
         <div className={`p-6 border-b ${darkMode ? 'border-white/10' : 'border-gray-200'}`}>
-          <img
-            src="https://customer-assets.emergentagent.com/job_rustomjee-sales-hub/artifacts/qap04r7n_Rustomjee_logo-removebg-preview.png"
-            alt="Rustomjee"
-            className={`h-8 invert ${!darkMode ? "" : ""}`}
-            data-testid="sidebar-logo"
-          />
+          {BRAND.logoUrl ? (
+            <img
+              src={BRAND.logoUrl}
+              alt={BRAND.logoAlt}
+              className={`h-8 invert ${!darkMode ? "" : ""}`}
+              data-testid="sidebar-logo"
+            />
+          ) : (
+            <h1 className={`font-serif text-2xl font-bold tracking-wider ${darkMode ? 'text-white' : 'text-gray-900'}`} data-testid="sidebar-logo">
+              {BRAND.name}
+            </h1>
+          )}
         </div>
 
         {/* Navigation */}
         <nav className="flex-1 py-6">
-          {navItems.map((item) => (
-            <NavLink
-              key={item.path}
-              to={item.path}
-              className={({ isActive }) =>
-                `flex items-center gap-3 px-6 py-3 text-sm transition-all ${
-                  isActive
-                    ? 'text-[#C5A059] bg-[#C5A059]/10 border-r-2 border-[#C5A059]'
-                    : darkMode 
-                      ? 'text-[#A1A1AA] hover:text-white hover:bg-white/5'
-                      : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-                }`
-              }
-              data-testid={`nav-${item.label.toLowerCase().replace(' ', '-')}`}
-            >
-              <item.icon size={20} strokeWidth={1.5} />
-              {item.label}
-            </NavLink>
-          ))}
+          {navItems.map((item) => renderNavLink(item))}
         </nav>
 
         {/* User Section */}
@@ -151,34 +182,22 @@ const DashboardLayout = () => {
 
         {/* Logo */}
         <div className={`p-6 border-b ${darkMode ? 'border-white/10' : 'border-gray-200'}`}>
-          <img
-            src="https://customer-assets.emergentagent.com/job_rustomjee-sales-hub/artifacts/qap04r7n_Rustomjee_logo-removebg-preview.png"
-            alt="Rustomjee"
-            className={`h-8 invert ${!darkMode ? "" : ""}`}
-          />
+          {BRAND.logoUrl ? (
+            <img
+              src={BRAND.logoUrl}
+              alt={BRAND.logoAlt}
+              className={`h-8 invert ${!darkMode ? "" : ""}`}
+            />
+          ) : (
+            <h1 className={`font-serif text-2xl font-bold tracking-wider ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+              {BRAND.name}
+            </h1>
+          )}
         </div>
 
         {/* Navigation */}
         <nav className="py-6">
-          {navItems.map((item) => (
-            <NavLink
-              key={item.path}
-              to={item.path}
-              onClick={() => setSidebarOpen(false)}
-              className={({ isActive }) =>
-                `flex items-center gap-3 px-6 py-3 text-sm transition-all ${
-                  isActive
-                    ? 'text-[#C5A059] bg-[#C5A059]/10 border-r-2 border-[#C5A059]'
-                    : darkMode 
-                      ? 'text-[#A1A1AA] hover:text-white hover:bg-white/5'
-                      : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-                }`
-              }
-            >
-              <item.icon size={20} strokeWidth={1.5} />
-              {item.label}
-            </NavLink>
-          ))}
+          {navItems.map((item) => renderNavLink(item, () => setSidebarOpen(false)))}
         </nav>
 
         {/* User Section */}

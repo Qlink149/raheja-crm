@@ -81,6 +81,25 @@ export function mapDispositionBreakdown(stats) {
     .sort((a, b) => b.value - a.value);
 }
 
+export function mapAvgDurationBreakdown(stats) {
+  if (!stats?.disposition_avg_duration) return [];
+  
+  const metrics = [
+    { key: "Site Visit", label: "Avg Site Visit" },
+    { key: "Interested", label: "Avg Interested" },
+    { key: "Not Interested", label: "Avg Not Interested" },
+    { key: "Dropped", label: "Avg Dropped" },
+    { key: "Busy", label: "Avg Busy" },
+    { key: "No Answer", label: "Avg NA" }
+  ];
+
+  return metrics.map((m, idx) => ({
+    name: m.label,
+    value: Math.round(Number(stats.disposition_avg_duration[m.key] || 0)),
+    color: CHART_COLORS[idx % CHART_COLORS.length]
+  }));
+}
+
 const SKIP_PROJECT_NAMES = new Set(["", "Unknown", "Profiling in Progress"]);
 
 function coerceProjectName(raw) {

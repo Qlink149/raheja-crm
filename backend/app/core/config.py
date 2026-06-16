@@ -6,7 +6,9 @@ ROOT_DIR = Path(__file__).parent.parent.parent
 load_dotenv(ROOT_DIR / '.env')
 
 class Settings:
-    PROJECT_NAME: str = "Rustomjee Sales Intelligence API"
+    BRAND_NAME: str = "Raheja"
+    WHITELABEL_AGENT_DISPLAY_NAME: str = "Raheja AI Sales Agent"
+    PROJECT_NAME: str = "Raheja Sales Intelligence API"
     SECRET_KEY: str = os.environ.get(
         "SECRET_KEY", "rustomjee-secret-key-change-in-production"
     )
@@ -51,6 +53,12 @@ class Settings:
     GUPSHUP_APP_ID: str = os.environ.get("GUPSHUP_APP_ID", "").strip()
     GUPSHUP_SOURCE_PHONE: str = os.environ.get("GUPSHUP_SOURCE_PHONE", "").strip()
     GUPSHUP_BASE_URL: str = "https://api.gupshup.io"
+
+    # Virtual Customer access tier: preview | full | locked
+    VC_ACCESS_TIER: str = os.environ.get("VC_ACCESS_TIER", "preview").strip().lower()
+    VC_PREVIEW_UNLOCKED_LIMIT: int = int(os.environ.get("VC_PREVIEW_UNLOCKED_LIMIT", "5"))
+    VC_PREVIEW_TEASER_LIMIT: int = int(os.environ.get("VC_PREVIEW_TEASER_LIMIT", "15"))
+    VC_PREVIEW_DISPOSITION: str = os.environ.get("VC_PREVIEW_DISPOSITION", "Site Visit").strip()
 
     ROOT_DIR: Path = ROOT_DIR
 

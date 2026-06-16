@@ -2,6 +2,8 @@ import React from "react";
 import { motion } from "framer-motion";
 import { Construction } from "lucide-react";
 
+import { BRAND } from "../../lib/brandConfig";
+
 const ComingSoonPage = ({ title = "Coming Soon", description }) => {
   return (
     <motion.div
@@ -15,7 +17,7 @@ const ComingSoonPage = ({ title = "Coming Soon", description }) => {
       <h1 className="font-serif text-3xl text-white mb-2">{title}</h1>
       <p className="text-[#A1A1AA] max-w-md">
         {description ||
-          "This module is part of the Arihant CRM experience and will be available in a future release."}
+          `This module is part of the ${BRAND.productName} experience and will be available in a future release.`}
       </p>
     </motion.div>
   );

@@ -23,6 +23,10 @@ Assistant: हां जी बोलिए।`;
 const HINDI_CUSTOMER_LABEL = `Assistant: नमस्ते
 ग्राहक: हां जी`;
 
+const LOWERCASE_TRANSCRIPT = `assistant: नमस्ते, मैं प्रिया बात कर रही हूं।
+user: हाँ, बोलिए।
+assistant: क्या मैं आपसे बात कर रही हूं?`;
+
 describe("detectTranscriptSpeakerMode", () => {
   it("returns normal when Assistant speaks first", () => {
     expect(detectTranscriptSpeakerMode(NORMAL_TRANSCRIPT.split("\n"))).toBe("normal");
@@ -87,5 +91,18 @@ describe("parseCallTranscriptTurns", () => {
     const turns = parseCallTranscriptTurns(escaped);
     expect(turns[0].isUser).toBe(false);
     expect(turns.length).toBeGreaterThan(1);
+  });
+
+  it("parses lowercase Futwork assistant:/user: labels into separate chat turns", () => {
+    const turns = parseCallTranscriptTurns(LOWERCASE_TRANSCRIPT);
+    expect(turns).toHaveLength(3);
+    expect(turns[0].isUser).toBe(false);
+    expect(turns[1].isUser).toBe(true);
+    expect(turns[2].isUser).toBe(false);
+    turns.forEach((turn) => {
+      expect(turn.text).not.toMatch(/^\s*(assistant|user)\s*:/i);
+    });
+    expect(turns[0].text).toMatch(/प्रिया/);
+    expect(turns[1].text).toMatch(/बोलिए/);
   });
 });

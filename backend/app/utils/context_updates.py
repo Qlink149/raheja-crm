@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from ..core.time_utils import serialize_datetime_utc
+from .lead_call_history import build_lead_call_history_query
 
 logger = logging.getLogger(__name__)
 
@@ -206,11 +207,11 @@ async def fetch_calls_for_lead(db, lead_id: str) -> List[Dict[str, Any]]:
         return []
 
     mobile_digits = (lead.get("mobile_digits") or "").strip()
-    if not mobile_digits:
+    if not mobile_digits and not lead.get("id"):
         return []
 
     history_docs = await db.call_history.find(
-        {"mobile_digits": mobile_digits},
+        build_lead_call_history_query(lead_id, lead),
         {"_id": 0},
     ).sort("created_at", -1).to_list(50)
 

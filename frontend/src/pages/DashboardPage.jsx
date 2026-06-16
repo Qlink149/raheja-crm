@@ -13,11 +13,12 @@ import {
   buildAICallingDrillParams,
   formatDashboardNumber,
   REGIONAL_COLORS,
+  mapAvgDurationBreakdown,
 } from "../lib/adapters/dashboardAdapter";
 import ChartTooltip from "../components/shared/ChartTooltip";
 import { DashboardSkeleton } from "../components/feedback/Skeletons";
 import { LoadingOverlay, FetchError } from "../components/loading";
-import { toast } from "sonner";
+import { formatDuration } from "../lib/formatDuration";
 import {
   Users,
   Crown,
@@ -58,6 +59,8 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "../components/ui/tooltip";
+import { BRAND } from "../lib/brandConfig";
+import { isFeatureLocked, SHOW_PROJECT_DISTRIBUTION, isVcPreviewMode, isVcFullyLocked } from "../lib/featureAccess";
 
 const LEAD_CRITERIA = {
   cold: {
@@ -130,7 +133,6 @@ const DashboardPage = () => {
   const [error, setError] = useState(null);
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [timeFilter, setTimeFilter] = useState("all");
-  const [projectFilter, setProjectFilter] = useState("all");
   const [dateRange, setDateRange] = useState(null);
 
   const timeFilters = [
@@ -145,7 +147,7 @@ const DashboardPage = () => {
     setLoading(true);
     setError(null);
     try {
-      const params = buildStatsParams(timeFilter, projectFilter, dateRange);
+      const params = buildStatsParams(timeFilter, "all", dateRange);
       const [statsRes, projectsRes, ownersRes] = await Promise.all([
         api.get("/dashboard/stats", { params }),
         api.get("/dashboard/projects"),
@@ -164,7 +166,7 @@ const DashboardPage = () => {
     } finally {
       setLoading(false);
     }
-  }, [timeFilter, projectFilter, dateRange]);
+  }, [timeFilter, dateRange]);
 
   useEffect(() => {
     fetchData();
@@ -181,7 +183,7 @@ const DashboardPage = () => {
   };
 
   const leadSources = useMemo(() => mapLeadSources(stats), [stats]);
-  const statusData = useMemo(() => mapStatusBreakdown(stats), [stats]);
+  const durationData = useMemo(() => mapAvgDurationBreakdown(stats), [stats]);
   const dispositionData = useMemo(() => mapDispositionBreakdown(stats), [stats]);
   const displayProjects = useMemo(() => {
     const otherProjectCard =
@@ -199,14 +201,13 @@ const DashboardPage = () => {
       ]
       : projectList;
   }, [projectList, projectMeta]);
-  const projectsForGrid = projectList;
 
   const handleDispositionClick = (entry) => {
     if (!entry?.name || entry.name === "No Disposition") return;
     const params = buildAICallingDrillParams(
       entry.name,
       timeFilter,
-      projectFilter,
+      "all",
       dateRange
     );
     navigate(`/ai-calling?${params.toString()}`);
@@ -216,24 +217,53 @@ const DashboardPage = () => {
     const params = buildVirtualDrillParams(
       bucket,
       timeFilter,
-      projectFilter,
+      "all",
       dateRange
     );
     navigate(`/virtual-customer?${params.toString()}`);
   };
 
-  const statTileProps = (bucket) => ({
-    role: "button",
-    tabIndex: 0,
-    onClick: () => handleStatClick(bucket),
-    onKeyDown: (e) => {
-      if (e.key === "Enter" || e.key === " ") {
-        e.preventDefault();
-        handleStatClick(bucket);
-      }
-    },
-  });
-  const projectNames = projectsForGrid.map((p) => p.name);
+  const vcPreview = isVcPreviewMode();
+  const vcFullyLocked = isVcFullyLocked();
+
+  const isStatClickable = (bucket) => {
+    if (!vcFullyLocked && !vcPreview) return true;
+    if (vcPreview && bucket === "site_visit") return true;
+    return false;
+  };
+
+  const statTileInteractive = (bucket) =>
+    isStatClickable(bucket)
+      ? "card-hover cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#C5A059]/50"
+      : "";
+
+  const statTileProps = (bucket) => {
+    if (!isStatClickable(bucket)) return {};
+    if (vcPreview && bucket === "site_visit") {
+      return {
+        role: "button",
+        tabIndex: 0,
+        onClick: () => navigate("/virtual-customer"),
+        onKeyDown: (e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            navigate("/virtual-customer");
+          }
+        },
+      };
+    }
+    return {
+      role: "button",
+      tabIndex: 0,
+      onClick: () => handleStatClick(bucket),
+      onKeyDown: (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          handleStatClick(bucket);
+        }
+      },
+    };
+  };
   const isInitialLoading = loading && !hasLoadedOnce;
   const isRefetching = loading && hasLoadedOnce;
   const displayStat = (key) => {
@@ -258,12 +288,12 @@ const DashboardPage = () => {
         <div className="absolute inset-0 bg-gradient-to-r from-black/80 via-black/60 to-black/30" />
         <div className="relative z-10 h-full flex items-center px-8">
           <div>
-            <p className="text-[#C5A059] text-sm font-medium tracking-widest uppercase">Rustomjee</p>
+            <p className="text-[#C5A059] text-sm font-medium tracking-widest uppercase">{BRAND.name}</p>
             <h1 className="font-serif text-3xl lg:text-4xl text-white mt-1" data-testid="dashboard-greeting">
               Hello, {user?.full_name?.split(" ")[0] || user?.email?.split("@")[0] || "there"}
             </h1>
             <p className="text-white/70 mt-1 text-sm">
-              Your sales intelligence overview — premium residences across Mumbai
+              Your sales intelligence overview — premium residences
             </p>
           </div>
         </div>
@@ -295,36 +325,6 @@ const DashboardPage = () => {
                 className="text-white hover:bg-[#C5A059]/10 hover:text-[#C5A059] cursor-pointer"
               >
                 {filter.label}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="outline"
-              className="bg-[#1A1A1A] border-white/10 text-white hover:bg-white/5 hover:text-[#C5A059]"
-              data-testid="project-filter-dropdown"
-            >
-              {projectFilter === "all" ? "All Projects" : projectFilter}
-              <ChevronDown size={16} className="ml-2" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent className="bg-[#1A1A1A] border-white/10">
-            <DropdownMenuItem
-              onClick={() => setProjectFilter("all")}
-              className="text-white hover:bg-[#C5A059]/10 hover:text-[#C5A059] cursor-pointer"
-            >
-              All Projects
-            </DropdownMenuItem>
-            {projectNames.map((project) => (
-              <DropdownMenuItem
-                key={project}
-                onClick={() => setProjectFilter(project)}
-                className="text-white hover:bg-[#C5A059]/10 hover:text-[#C5A059] cursor-pointer"
-              >
-                {project}
               </DropdownMenuItem>
             ))}
           </DropdownMenuContent>
@@ -368,41 +368,39 @@ const DashboardPage = () => {
                 className="grid grid-cols-1 md:grid-cols-2 gap-4"
               >
                 <div
-                  className="glass-card rounded-lg p-6 border-l-4 border-blue-500 card-hover cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#C5A059]/50"
-                  data-testid="cold-leads-tile"
-                  {...statTileProps("cold")}
+                  className={`glass-card rounded-lg p-6 border-l-4 border-blue-500 ${statTileInteractive("site_visit")}`}
+                  data-testid="site-visit-tile"
+                  {...statTileProps("site_visit")}
                 >
                   <div className="flex items-center justify-between">
                     <div>
                       <div className="flex items-center">
-                        <p className="text-[#A1A1AA] text-sm uppercase tracking-wider">Cold Leads</p>
-                        <LeadCriteriaTooltip type="cold" />
+                        <p className="text-[#A1A1AA] text-sm uppercase tracking-wider">Site Visit</p>
                       </div>
-                      <p className="font-serif text-4xl text-white mt-2 tabular-nums truncate" title={String(displayStat("cold_leads"))}>{displayStat("cold_leads")}</p>
-                      <p className="text-blue-400 text-sm mt-1">Needs Re-engagement</p>
+                      <p className="font-serif text-4xl text-white mt-2 tabular-nums truncate" title={String(displayStat("site_visits"))}>{displayStat("site_visits")}</p>
+                      <p className="text-blue-400 text-sm mt-1">Visits Scheduled</p>
                     </div>
                     <div className="w-14 h-14 rounded-full bg-blue-500/20 flex items-center justify-center">
-                      <Snowflake className="text-blue-500" size={28} />
+                      <CheckCircle className="text-blue-500" size={28} />
                     </div>
                   </div>
                 </div>
 
                 <div
-                  className="glass-card rounded-lg p-6 border-l-4 border-orange-500 card-hover cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#C5A059]/50"
-                  data-testid="dormant-leads-tile"
-                  {...statTileProps("dormant")}
+                  className={`glass-card rounded-lg p-6 border-l-4 border-orange-500 ${statTileInteractive("interested")}`}
+                  data-testid="interested-tile"
+                  {...statTileProps("interested")}
                 >
                   <div className="flex items-center justify-between">
                     <div>
                       <div className="flex items-center">
-                        <p className="text-[#A1A1AA] text-sm uppercase tracking-wider">Dormant Leads</p>
-                        <LeadCriteriaTooltip type="dormant" />
+                        <p className="text-[#A1A1AA] text-sm uppercase tracking-wider">Interested</p>
                       </div>
-                      <p className="font-serif text-4xl text-white mt-2 tabular-nums truncate" title={String(displayStat("dormant_leads"))}>{displayStat("dormant_leads")}</p>
-                      <p className="text-orange-400 text-sm mt-1">No activity in 7+ days</p>
+                      <p className="font-serif text-4xl text-white mt-2 tabular-nums truncate" title={String(displayStat("interested_calls"))}>{displayStat("interested_calls")}</p>
+                      <p className="text-orange-400 text-sm mt-1">High Intent Calls</p>
                     </div>
                     <div className="w-14 h-14 rounded-full bg-orange-500/20 flex items-center justify-center">
-                      <TrendingDown className="text-orange-500" size={28} />
+                      <Flame className="text-orange-500" size={28} />
                     </div>
                   </div>
                 </div>
@@ -415,7 +413,7 @@ const DashboardPage = () => {
                 className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4"
               >
                 <div
-                  className="glass-card rounded-lg p-6 card-hover cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#C5A059]/50"
+                  className={`glass-card rounded-lg p-6 ${statTileInteractive(null)}`}
                   data-testid="total-leads-tile"
                   {...statTileProps(null)}
                 >
@@ -429,48 +427,43 @@ const DashboardPage = () => {
                 </div>
 
                 <div
-                  className="glass-card rounded-lg p-6 card-hover cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#C5A059]/50"
-                  data-testid="warm-leads-tile"
-                  {...statTileProps("warm")}
+                  className={`glass-card rounded-lg p-6 ${statTileInteractive("total_min")}`}
+                  data-testid="total-min-tile"
+                  {...statTileProps("total_min")}
                 >
                   <div className="flex items-center justify-between mb-4">
                     <div className="w-12 h-12 rounded-lg bg-orange-500/20 flex items-center justify-center">
-                      <Sun className="text-orange-500" size={24} />
+                      <Crown className="text-orange-500" size={24} />
                     </div>
-                    <LeadCriteriaTooltip type="warm" />
                   </div>
-                  <p className="text-[#A1A1AA] text-sm">Warm Leads</p>
-                  <p className="font-serif text-3xl text-white mt-1 tabular-nums truncate" title={String(displayStat("warm_leads"))}>{displayStat("warm_leads")}</p>
+                  <p className="text-[#A1A1AA] text-sm">Total Min (Billed)</p>
+                  <p className="font-serif text-3xl text-white mt-1 tabular-nums truncate" title={String(displayStat("total_billed_minutes"))}>{displayStat("total_billed_minutes")}</p>
                 </div>
 
                 <div
-                  className="glass-card rounded-lg p-6 card-hover cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#C5A059]/50"
-                  data-testid="hot-leads-tile"
-                  {...statTileProps("hot")}
+                  className={`glass-card rounded-lg p-6 ${statTileInteractive("total_calls")}`}
+                  {...statTileProps("total_calls")}
                 >
                   <div className="flex items-center justify-between mb-4">
                     <div className="w-12 h-12 rounded-lg bg-red-500/20 flex items-center justify-center">
-                      <Flame className="text-red-500" size={24} />
+                      <Users className="text-red-500" size={24} />
                     </div>
-                    <LeadCriteriaTooltip type="hot" />
                   </div>
-                  <p className="text-[#A1A1AA] text-sm">Hot Leads</p>
-                  <p className="font-serif text-3xl text-white mt-1 tabular-nums truncate" title={String(displayStat("hot_leads"))}>{displayStat("hot_leads")}</p>
+                  <p className="text-[#A1A1AA] text-sm">Total Calls</p>
+                  <p className="font-serif text-3xl text-white mt-1 tabular-nums truncate" title={String(displayStat("total_calls"))}>{displayStat("total_calls")}</p>
                 </div>
 
                 <div
-                  className="glass-card rounded-lg p-6 card-hover cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#C5A059]/50"
-                  data-testid="qualified-leads-tile"
-                  {...statTileProps("qualified")}
+                  className={`glass-card rounded-lg p-6 ${statTileInteractive("avg_duration")}`}
+                  {...statTileProps("avg_duration")}
                 >
                   <div className="flex items-center justify-between mb-4">
                     <div className="w-12 h-12 rounded-lg bg-green-500/20 flex items-center justify-center">
-                      <CheckCircle className="text-green-500" size={24} />
+                      <Calendar className="text-green-500" size={24} />
                     </div>
-                    <LeadCriteriaTooltip type="qualified" />
                   </div>
-                  <p className="text-[#A1A1AA] text-sm">Qualified Leads</p>
-                  <p className="font-serif text-3xl text-white mt-1 tabular-nums truncate" title={String(displayStat("qualified_leads"))}>{displayStat("qualified_leads")}</p>
+                  <p className="text-[#A1A1AA] text-sm truncate" title="Avg Connected Call Duration">Avg Connected Call Duration</p>
+                  <p className="font-serif text-3xl text-white mt-1 tabular-nums truncate" title={String(stats ? formatDuration(stats.avg_call_duration) : "—")}>{stats ? formatDuration(stats.avg_call_duration) : "—"}</p>
                 </div>
               </motion.div>
 
@@ -544,57 +537,43 @@ const DashboardPage = () => {
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: 0.3 }}
                   className="glass-card rounded-lg p-6"
-                  data-testid="lead-status-chart"
+                  data-testid="avg-duration-chart"
                 >
-                  <h3 className="font-serif text-xl text-white mb-2">Lead Qualification Distribution</h3>
-                  <p className="text-[#737373] text-xs mb-4">Matches dashboard KPI tiles (lead counts)</p>
+                  <h3 className="font-serif text-xl text-white mb-2">Avg call duration (in sec)</h3>
+                  <p className="text-[#737373] text-xs mb-4">Average duration of calls by disposition</p>
                   <div className="flex items-center justify-center">
                     <ResponsiveContainer width="100%" height={300}>
-                      <PieChart>
-                        <Pie
-                          data={statusData}
-                          cx="50%"
-                          cy="50%"
-                          innerRadius={60}
-                          outerRadius={100}
-                          paddingAngle={5}
-                          dataKey="value"
-                          nameKey="name"
-                        >
-                          {statusData.map((entry, index) => (
-                            <Cell key={`cell-${index}`} fill={entry.color} />
-                          ))}
-                        </Pie>
+                      <BarChart data={durationData} layout="vertical" margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#ffffff10" horizontal={false} />
+                        <XAxis type="number" stroke="#ffffff50" tickFormatter={(v) => `${v}s`} />
+                        <YAxis dataKey="name" type="category" stroke="#ffffff80" width={120} tick={{ fontSize: 12 }} />
                         <Tooltip
+                          cursor={{ fill: '#ffffff10' }}
                           content={({ active, payload }) => {
                             if (active && payload?.length) {
                               return (
                                 <div className="bg-[#1A1A1A] border border-white/10 rounded-lg p-3 shadow-xl">
-                                  <p className="text-[#C5A059] font-medium">{payload[0].name}</p>
-                                  <p className="text-white">{payload[0].value} leads</p>
+                                  <p className="text-[#C5A059] font-medium mb-1">{payload[0].payload.name}</p>
+                                  <p className="text-white">Avg Duration: {formatDuration(payload[0].value)} ({payload[0].value}s)</p>
                                 </div>
                               );
                             }
                             return null;
                           }}
                         />
-                      </PieChart>
+                        <Bar dataKey="value" radius={[0, 4, 4, 0]}>
+                          {durationData.map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={entry.color} />
+                          ))}
+                        </Bar>
+                      </BarChart>
                     </ResponsiveContainer>
-                  </div>
-                  <div className="flex flex-wrap justify-center gap-x-4 gap-y-2 mt-4">
-                    {statusData.map((item) => (
-                      <div key={item.name} className="flex items-center gap-2">
-                        <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: item.color }} />
-                        <span className="text-[#A1A1AA] text-xs whitespace-nowrap">
-                          {item.name} ({item.value})
-                        </span>
-                      </div>
-                    ))}
                   </div>
                 </motion.div>
               </div>
 
 
+              {SHOW_PROJECT_DISTRIBUTION && (
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -654,6 +633,7 @@ const DashboardPage = () => {
                   ))}
                 </div>
               </motion.div>
+              )}
             </div>
           )}
           <LoadingOverlay show={isRefetching} />

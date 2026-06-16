@@ -1,5 +1,7 @@
+import { BRAND } from "../lib/brandConfig";
+
 /** Vendor display name shown in UI / transcripts */
-export const WHITELABEL_AGENT_LABEL = "Rustomjee AI Sales Agent";
+export const WHITELABEL_AGENT_LABEL = BRAND.aiAgentLabel;
 
 /**
  * Replace vendor agent branding in free text (transcripts, summaries).
@@ -22,18 +24,18 @@ function normalizeNewlines(raw) {
  * English dialer labels + Hindi customer labels; body may be any Unicode.
  */
 export const SPEAKER_LINE_RE =
-  /^\s*(User|Customer|Assistant|AI\s*Agent|Futwork\s*Agent|Agent|System|Bot|ग्राहक|यूज़र|उपयोगकर्ता)\s*:\s*(.*)$/su;
+  /^\s*(User|Customer|Assistant|AI\s*Agent|Futwork\s*Agent|Agent|System|Bot|ग्राहक|यूज़र|उपयोगकर्ता)\s*:\s*(.*)$/isu;
 
 /** @typedef {'normal' | 'swapped' | 'unknown'} TranscriptSpeakerMode */
 
 const AGENT_BODY_PATTERNS = [
   /मैं\s+प्रिया/i,
   /\bpriya\b/i,
-  /रुस्तम\s*जी/i,
-  /\brustomjee\b/i,
+  /राहेजा/i,
+  /\braheja\b/i,
   /क्या\s+मैं\s+.+\s+से\s+बात\s+कर\s+रही\s+हूं/i,
-  /देखिए\s+आपने\s+पहले\s+रुस्तम/i,
-  /रुस्तम\s*जी\s*डेवलपर्स/i,
+  /देखिए\s+आपने\s+पहले\s+राहेजा/i,
+  /राहेजा\s*डेवलपर्स/i,
 ];
 
 export function normalizeSpeakerLabel(labelRaw) {

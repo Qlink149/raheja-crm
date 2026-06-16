@@ -4,13 +4,11 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
 import { Eye, EyeOff, Building2 } from "lucide-react";
-
-const RUSTOMJEE_LOGO =
-  "https://customer-assets.emergentagent.com/job_rustomjee-sales-hub/artifacts/qap04r7n_Rustomjee_logo-removebg-preview.png";
+import { BRAND } from "../lib/brandConfig";
 
 const LoginPage = () => {
-  const [email, setEmail] = useState("ravinder@rustomjee.com");
-  const [password, setPassword] = useState("rustomjee@123");
+  const [email, setEmail] = useState("digital.marketing@krahejarealty.com");
+  const [password, setPassword] = useState("raheja@123");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [showTransition, setShowTransition] = useState(false);
@@ -39,13 +37,13 @@ const LoginPage = () => {
   };
 
   const handleDemoLogin = async () => {
-    setEmail("ravinder@rustomjee.com");
-    setPassword("rustomjee@123");
-    setIsLoading(true);
-    setError("");
+    setEmail("digital.marketing@krahejarealty.com");
+    setPassword("raheja@123");
 
     try {
-      const me = await login("ravinder@rustomjee.com", "rustomjee@123");
+      setIsLoading(true);
+      setError("");
+      const me = await login("digital.marketing@krahejarealty.com", "raheja@123");
       setShowTransition(true);
       const dest = me?.role === "admin" ? "/dashboard" : "/my-dashboard";
       setTimeout(() => {
@@ -83,8 +81,8 @@ const LoginPage = () => {
             exit={{ opacity: 0 }}
           >
             <motion.img
-              src={RUSTOMJEE_LOGO}
-              alt="Rustomjee"
+              src={BRAND.logoUrl}
+              alt={BRAND.logoAlt}
               className="h-16 mb-8 invert"
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
@@ -123,7 +121,7 @@ const LoginPage = () => {
               animate={{ opacity: 1 }}
               transition={{ delay: 2 }}
             >
-              <h1 className="font-serif text-3xl text-[#C5A059]">Welcome to Rustomjee</h1>
+              <h1 className="font-serif text-3xl text-[#C5A059]">Welcome to {BRAND.name}</h1>
               <p className="text-[#A1A1AA] mt-2">Sales Intelligence Dashboard</p>
             </motion.div>
             <motion.div
@@ -155,13 +153,17 @@ const LoginPage = () => {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 0.8 }}
+            data-testid="login-logo"
           >
-            <img
-              src={RUSTOMJEE_LOGO}
-              alt="Rustomjee"
-              className="h-12 invert"
-              data-testid="login-logo"
-            />
+            {BRAND.logoUrl ? (
+              <img
+                src={BRAND.logoUrl}
+                alt={BRAND.logoAlt}
+                className="h-12 mb-8 invert opacity-90"
+              />
+            ) : (
+              <h1 className="font-serif text-4xl text-white mb-8 font-bold tracking-wider">{BRAND.name}</h1>
+            )}
           </motion.div>
 
           <motion.div
@@ -185,7 +187,7 @@ const LoginPage = () => {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="w-full h-12 px-4 bg-black/50 border border-white/20 rounded-md text-white focus:border-[#C5A059] transition-colors"
-                  placeholder="ravinder@rustomjee.com"
+                  placeholder="digital.marketing@krahejarealty.com"
                   required
                   data-testid="login-email-input"
                 />
@@ -243,13 +245,13 @@ const LoginPage = () => {
               >
                 <span className="flex items-center justify-center gap-2">
                   <Building2 size={18} />
-                  Demo Login as Ravinder
+                  Demo Login as utpal
                 </span>
               </button>
             </form>
 
             <p className="text-center text-[#52525B] text-xs mt-8">
-              Rustomjee — Sales Hub
+              {BRAND.name} — {BRAND.tagline}
             </p>
           </motion.div>
         </motion.div>
