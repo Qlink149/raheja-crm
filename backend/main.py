@@ -52,8 +52,19 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup_db_client():
-    await connect_to_mongo()
-    await initialize_db()
+    if not settings.MONGO_URL:
+        logger.error("MONGO_URL is not set — database operations will fail")
+        return
+    try:
+        await connect_to_mongo()
+    except Exception as e:
+        logger.error("MongoDB connection failed at startup: %s", e)
+        return
+    try:
+        await initialize_db()
+    except Exception as e:
+        # Non-fatal: indexes/seed may fail (e.g. Atlas write quota). Reads still work.
+        logger.warning("Database initialization skipped (non-fatal): %s", e)
     logger.info("Backend started — Raheja Sales Intelligence API (serverless ready)")
 
 
@@ -69,7 +80,16 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy"}
+    if not settings.MONGO_URL:
+        return {"status": "degraded", "database": "MONGO_URL not configured"}
+    if db_instance.db is None:
+        return {"status": "degraded", "database": "not connected"}
+    try:
+        await db_instance.db.command("ping")
+        return {"status": "healthy", "database": "connected"}
+    except Exception as e:
+        logger.warning("Health check DB ping failed: %s", e)
+        return {"status": "degraded", "database": str(e)}
 
 
 # ── API Routers ──────────────────────────────────────────────────────────────
