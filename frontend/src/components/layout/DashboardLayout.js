@@ -125,7 +125,7 @@ const DashboardLayout = () => {
             <img
               src={BRAND.logoUrl}
               alt={BRAND.logoAlt}
-              className={`h-8 invert ${!darkMode ? "" : ""}`}
+              className="h-8"
               data-testid="sidebar-logo"
             />
           ) : (
@@ -186,7 +186,7 @@ const DashboardLayout = () => {
             <img
               src={BRAND.logoUrl}
               alt={BRAND.logoAlt}
-              className={`h-8 invert ${!darkMode ? "" : ""}`}
+              className="h-8"
             />
           ) : (
             <h1 className={`font-serif text-2xl font-bold tracking-wider ${darkMode ? 'text-white' : 'text-gray-900'}`}>

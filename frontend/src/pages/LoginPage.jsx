@@ -83,7 +83,7 @@ const LoginPage = () => {
             <motion.img
               src={BRAND.logoUrl}
               alt={BRAND.logoAlt}
-              className="h-16 mb-8 invert"
+              className="h-16 mb-8"
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.3 }}
@@ -159,7 +159,7 @@ const LoginPage = () => {
               <img
                 src={BRAND.logoUrl}
                 alt={BRAND.logoAlt}
-                className="h-12 mb-8 invert opacity-90"
+                className="h-12 mb-8"
               />
             ) : (
               <h1 className="font-serif text-4xl text-white mb-8 font-bold tracking-wider">{BRAND.name}</h1>
