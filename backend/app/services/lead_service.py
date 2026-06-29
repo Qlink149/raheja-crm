@@ -305,7 +305,10 @@ class LeadService:
 
                 if existing:
                     patch = dict(lead_data)
-                    patch.pop("futwork_sync_status", None)
+                    if upload_batch_id:
+                        patch["futwork_sync_status"] = "pending"
+                    else:
+                        patch.pop("futwork_sync_status", None)
                     if str(existing.get("futwork_lead_id") or "").strip():
                         patch.pop("futwork_lead_id", None)
                     if not str(lead_data.get("client_lead_id") or "").strip():
