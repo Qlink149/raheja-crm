@@ -85,7 +85,7 @@ const BulkFutworkPushModal = ({
         <div className="space-y-4 text-sm">
           <p className="text-[#A3A3A3]">
             <span className="text-white font-medium tabular-nums">{eligibleCount}</span>{" "}
-            leads ready (valid phone + Lead ID, not yet synced). Large batches run in the
+            leads ready (valid 10-digit phone, not yet synced). Large batches run in the
             background and may take a long time.
           </p>
 

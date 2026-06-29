@@ -132,18 +132,18 @@ async def resolve_lead_for_webhook(
     raw_phone: str,
     projection: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Full resolution: client id, futwork id, then phone candidates."""
-    lead = await resolve_lead_by_webhook_ids(
+    """Full resolution: phone first (Raheja), then optional ID echoes (legacy)."""
+    lead = await resolve_lead_by_phone_candidates(
         db,
-        webhook_futwork_id=webhook_futwork_id,
-        echo_client_id=echo_client_id,
+        raw_phone,
         projection=projection,
     )
     if lead:
         return lead
-    return await resolve_lead_by_phone_candidates(
+    return await resolve_lead_by_webhook_ids(
         db,
-        raw_phone,
+        webhook_futwork_id=webhook_futwork_id,
+        echo_client_id=echo_client_id,
         projection=projection,
     )
 

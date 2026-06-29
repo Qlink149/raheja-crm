@@ -47,5 +47,5 @@ export const UI_COPY = {
   callingEngineDialOut: `${CALLING_ENGINE_NAME} dial-out`,
   bulkPushBatchNote: `This batch was created from a DB bulk ${CALLING_ENGINE_NAME} push (no CSV file).`,
   eligiblePushHint:
-    "leads in the database can still be pushed to Calling Engine (pending or failed sync, valid phone + Lead ID).",
+    "leads in the database can still be pushed to Calling Engine (pending or failed sync, valid 10-digit phone).",
 };

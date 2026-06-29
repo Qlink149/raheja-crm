@@ -1,9 +1,12 @@
 import asyncio
+import io
+import re
 import uuid
 import logging
 import httpx
+import pandas as pd
 from datetime import datetime
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from ..core.config import settings
 from ..utils.campaign_stats import (
@@ -17,6 +20,7 @@ from .futwork_push import post_one_lead_to_futwork
 logger = logging.getLogger(__name__)
 
 BULK_FUTWORK_PUSH_MAX_LIMIT = 5000
+_UPLOAD_FAILURE_CHUNK = 1000
 
 # Map internal agent IDs to human-readable names
 AGENT_NAME_MAP = {
@@ -220,6 +224,8 @@ class CampaignService:
         "$or": [
             {"futwork_pushed": {"$gt": 0}},
             {"source": "bulk_push"},
+            {"source": "csv_upload"},
+            {"status": "processing"},
         ]
     }
 
@@ -378,6 +384,187 @@ class CampaignService:
             "status": "processing",
             "requested": lim,
         }
+
+    @staticmethod
+    def _parse_csv_bytes(content: bytes) -> Tuple[List[Dict[str, Any]], List[str]]:
+        try:
+            df = pd.read_csv(io.BytesIO(content))
+        except UnicodeDecodeError:
+            df = pd.read_csv(io.BytesIO(content), encoding="latin-1")
+        rows = df.to_dict("records")
+        headers = [str(c) for c in df.columns.tolist()]
+        return rows, headers
+
+    async def start_csv_upload(
+        self,
+        *,
+        content: bytes,
+        filename: str,
+        batch_name: str,
+        push_to_futwork: bool,
+    ) -> Dict[str, Any]:
+        """Validate CSV, store file, enqueue background ingest + optional Futwork push."""
+        if push_to_futwork and not (
+            (settings.FUTWORK_API_KEY or "").strip()
+            and (settings.FUTWORK_CAMPAIGN_ID or "").strip()
+        ):
+            raise ValueError("futwork_not_configured")
+
+        try:
+            rows, csv_headers = self._parse_csv_bytes(content)
+        except pd.errors.EmptyDataError:
+            raise ValueError("empty_csv")
+        except Exception as e:
+            raise ValueError(f"invalid_csv:{e}") from e
+
+        if not rows:
+            raise ValueError("no_data_rows")
+
+        upload_id = str(uuid.uuid4())
+        resolved_batch = re.sub(r"\s+", " ", (batch_name or "").strip())[:200]
+        if not resolved_batch:
+            base = (filename or "upload.csv").rsplit(".", 1)[0].strip() or "upload"
+            resolved_batch = base[:200]
+
+        original_csv_secure_url = ""
+        original_csv_public_id = ""
+        from ..utils.cloudinary_csv import upload_lead_csv_raw
+
+        upload_result = await upload_lead_csv_raw(
+            content,
+            batch_label=resolved_batch,
+            upload_id=upload_id,
+        )
+        original_csv_secure_url = str(upload_result.get("secure_url") or "")
+        original_csv_public_id = str(upload_result.get("public_id") or "")
+
+        now = datetime.utcnow()
+        history_doc = {
+            "id": upload_id,
+            "source": "csv_upload",
+            "status": "processing",
+            "created_at": now,
+            "filename": filename or "upload.csv",
+            "batch_name": resolved_batch,
+            "original_csv_secure_url": original_csv_secure_url,
+            "original_csv_public_id": original_csv_public_id,
+            "processed": 0,
+            "new_leads": 0,
+            "updated_leads": 0,
+            "unprocessed": 0,
+            "row_count": len(rows),
+            "csv_headers": csv_headers,
+            "futwork_pushed": 0,
+            "futwork_failed": 0,
+        }
+        await self.db.lead_upload_history.insert_one(history_doc)
+
+        asyncio.create_task(
+            self._run_csv_upload(
+                upload_id=upload_id,
+                rows=rows,
+                batch_name=resolved_batch,
+                push_to_futwork=push_to_futwork,
+            )
+        )
+
+        return {
+            "upload_id": upload_id,
+            "status": "processing",
+            "batch_name": resolved_batch,
+            "row_count": len(rows),
+        }
+
+    async def _run_csv_upload(
+        self,
+        *,
+        upload_id: str,
+        rows: List[Dict[str, Any]],
+        batch_name: str,
+        push_to_futwork: bool,
+    ) -> None:
+        lead_svc = LeadService(self.db)
+        try:
+            result = await lead_svc.upsert_from_csv(
+                rows,
+                upload_batch_id=upload_id,
+                upload_batch_name=batch_name,
+                auto_assign_new=True,
+            )
+
+            processed = int(result.get("processed", 0) or 0)
+            new_count = int(result.get("new", 0) or 0)
+            updated_count = int(result.get("updated", 0) or 0)
+            failed_rows = result.get("failed_rows", []) or []
+            unprocessed = len(failed_rows)
+
+            if failed_rows:
+                try:
+                    failure_docs = [
+                        {
+                            "upload_id": upload_id,
+                            "row_index": int(f.get("row_index", -1)),
+                            "reason": f.get("reason", ""),
+                            "raw": f.get("raw", {}),
+                            "created_at": datetime.utcnow(),
+                        }
+                        for f in failed_rows
+                    ]
+                    for i in range(0, len(failure_docs), _UPLOAD_FAILURE_CHUNK):
+                        await self.db.lead_upload_failures.insert_many(
+                            failure_docs[i : i + _UPLOAD_FAILURE_CHUNK],
+                            ordered=False,
+                        )
+                except Exception:
+                    logger.exception(
+                        "Failed to persist lead_upload_failures | upload_id=%s | count=%s",
+                        upload_id,
+                        len(failed_rows),
+                    )
+
+            pushed_count = 0
+            failed_count = 0
+            if push_to_futwork:
+                upload_campaign_id = await self._resolve_internal_campaign_id()
+                leads_to_push = await lead_svc.leads_for_futwork_push_by_batch(upload_id)
+                pushed_count, failed_count = await lead_svc.push_to_futwork(
+                    leads_to_push,
+                    campaign_id=upload_campaign_id,
+                )
+
+            update: Dict[str, Any] = {
+                "processed": processed,
+                "new_leads": new_count,
+                "updated_leads": updated_count,
+                "unprocessed": unprocessed,
+                "futwork_pushed": pushed_count,
+                "futwork_failed": failed_count,
+                "status": "completed",
+            }
+            if processed <= 0 and len(rows) > 0:
+                update["status"] = "failed"
+
+            await self.db.lead_upload_history.update_one(
+                {"id": upload_id},
+                {"$set": update},
+            )
+            logger.info(
+                "csv_upload complete | upload_id=%s | processed=%s new=%s updated=%s "
+                "unprocessed=%s futwork_pushed=%s futwork_failed=%s",
+                upload_id,
+                processed,
+                new_count,
+                updated_count,
+                unprocessed,
+                pushed_count,
+                failed_count,
+            )
+        except Exception:
+            logger.exception("csv_upload failed | upload_id=%s", upload_id)
+            await self.db.lead_upload_history.update_one(
+                {"id": upload_id},
+                {"$set": {"status": "failed"}},
+            )
 
     async def _push_one_lead_to_futwork(
         self,

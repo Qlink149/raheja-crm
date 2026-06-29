@@ -28,28 +28,73 @@ async def close_mongo_connection():
     db_instance.client.close()
     logger.info("Closed MongoDB connection")
 
+async def _warn_duplicate_mobile_digits(db) -> None:
+    """Log if duplicate mobile_digits would block the unique index."""
+    try:
+        pipeline = [
+            {"$match": {"mobile_digits": {"$regex": r"^\d{10}$"}}},
+            {"$group": {"_id": "$mobile_digits", "count": {"$sum": 1}}},
+            {"$match": {"count": {"$gt": 1}}},
+            {"$limit": 5},
+        ]
+        dups = await db.leads.aggregate(pipeline).to_list(5)
+        if dups:
+            samples = [d["_id"] for d in dups]
+            logger.warning(
+                "Duplicate mobile_digits found (%s sample(s): %s). "
+                "Dedupe leads before unique mobile_digits index can be enforced.",
+                len(dups),
+                samples,
+            )
+    except Exception as e:
+        logger.warning("Could not check duplicate mobile_digits: %s", e)
+
+
 async def initialize_db():
     """Create indexes if they don't exist"""
     db = db_instance.db
-    # Lead — identity indexes (client_lead_id is the sole business unique key)
+    # Lead — identity indexes (mobile_digits is the Raheja business unique key)
     await db.leads.create_index("id", unique=True)
-    try:
-        await db.leads.drop_index("mobile_digits_1")
-    except Exception:
-        pass
-    await db.leads.create_index("mobile_digits")
     await db.leads.create_index("mobile")
     await db.leads.create_index("futwork_lead_id")
+
+    # Drop legacy non-unique mobile_digits index before creating unique sparse index
     try:
-        cid_indexes = await db.leads.index_information()
-        for idx_name, idx_info in cid_indexes.items():
-            keys = idx_info.get("key", [])
-            if keys and keys[0][0] == "client_lead_id" and idx_info.get("sparse"):
+        idx_info = await db.leads.index_information()
+        for idx_name, info in idx_info.items():
+            keys = info.get("key", [])
+            if not keys or keys[0][0] != "mobile_digits":
+                continue
+            if not info.get("unique"):
+                await db.leads.drop_index(idx_name)
+    except Exception:
+        pass
+
+    await _warn_duplicate_mobile_digits(db)
+    try:
+        await db.leads.create_index(
+            "mobile_digits",
+            unique=True,
+            sparse=True,
+            name="mobile_digits_unique_sparse",
+        )
+    except Exception as e:
+        logger.warning(
+            "Unique mobile_digits index not created (dedupe prod leads if needed): %s",
+            e,
+        )
+
+    # client_lead_id optional legacy field — non-unique
+    try:
+        idx_info = await db.leads.index_information()
+        for idx_name, info in idx_info.items():
+            keys = info.get("key", [])
+            if keys and keys[0][0] == "client_lead_id" and info.get("unique"):
                 await db.leads.drop_index(idx_name)
                 break
     except Exception:
         pass
-    await db.leads.create_index("client_lead_id", unique=True)
+    await db.leads.create_index("client_lead_id")
     await db.leads.create_index("external_id")
     await db.leads.create_index("campaign_id")
     await db.leads.create_index([("campaign_id", 1), ("futwork_sync_status", 1)])

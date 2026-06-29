@@ -79,7 +79,7 @@ async def _resolve_existing_lead(
     raw_phone: str,
     mobile_digits: str,
 ) -> Optional[Dict[str, Any]]:
-    """Match lead: client_lead_id, futwork_lead_id, then phone candidate variants."""
+    """Match lead: phone first, then optional client/futwork ids."""
     existing_lead = await resolve_lead_for_webhook(
         db,
         webhook_futwork_id=webhook_futwork_id,
@@ -323,8 +323,6 @@ async def futwork_webhook(
     }
     if webhook_futwork_id:
         set_fields["futwork_lead_id"] = webhook_futwork_id
-    if echo_client_id:
-        set_fields["client_lead_id"] = echo_client_id
     # Only regress futwork_status/status if we are NOT in a stale-intermediate
     # case (otherwise a delayed `in-progress` after `completed` would corrupt
     # the terminal record).

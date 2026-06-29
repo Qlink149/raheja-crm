@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import { format } from "date-fns";
@@ -85,6 +85,7 @@ const CampaignsPage = () => {
   const [detailsUploadId, setDetailsUploadId] = useState(null);
   const [eligibleFutworkCount, setEligibleFutworkCount] = useState(null);
   const [bulkPushModalOpen, setBulkPushModalOpen] = useState(false);
+  const processingIdsRef = useRef(new Set());
 
   const fetchUploadHistory = useCallback(async () => {
     const res = await api.get("/campaigns/current/upload-history");
@@ -160,12 +161,10 @@ const CampaignsPage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const hasProcessingBulkPush = uploadHistory.some(
-    (row) => row.source === "bulk_push" && row.status === "processing"
-  );
+  const hasProcessingUpload = uploadHistory.some((row) => row.status === "processing");
 
   useEffect(() => {
-    if (!hasProcessingBulkPush || !isBackendConfigured()) return undefined;
+    if (!hasProcessingUpload || !isBackendConfigured()) return undefined;
     const id = setInterval(async () => {
       try {
         await fetchUploadHistory();
@@ -175,7 +174,33 @@ const CampaignsPage = () => {
       }
     }, 5000);
     return () => clearInterval(id);
-  }, [hasProcessingBulkPush, fetchUploadHistory, fetchEligibleFutworkCount]);
+  }, [hasProcessingUpload, fetchUploadHistory, fetchEligibleFutworkCount]);
+
+  useEffect(() => {
+    const prev = processingIdsRef.current;
+    const currentProcessing = new Set(
+      uploadHistory.filter((row) => row.status === "processing").map((row) => row.id)
+    );
+    for (const uploadId of prev) {
+      if (currentProcessing.has(uploadId)) continue;
+      const row = uploadHistory.find((r) => r.id === uploadId);
+      if (!row) continue;
+      const label = row.batch_name || row.filename || "Upload";
+      if (row.status === "completed") {
+        const parts = [];
+        if (row.new_leads != null) parts.push(`${row.new_leads} new`);
+        if (row.updated_leads != null) parts.push(`${row.updated_leads} updated`);
+        if (row.unprocessed) parts.push(`${row.unprocessed} skipped`);
+        if (row.futwork_pushed != null) parts.push(`${row.futwork_pushed} synced to calling`);
+        toast.success(
+          parts.length ? `${label} complete: ${parts.join(", ")}` : `${label} complete`
+        );
+      } else if (row.status === "failed") {
+        toast.error(`${label} failed — open details for more info`);
+      }
+    }
+    processingIdsRef.current = currentProcessing;
+  }, [uploadHistory]);
 
   const handleMainRefresh = async () => {
     setRefreshingMain(true);
@@ -254,19 +279,32 @@ const CampaignsPage = () => {
         params: Object.keys(params).length ? params : undefined,
       });
       const d = res.data || {};
-      const parts = [];
-      if (d.new != null) parts.push(`${d.new} new`);
-      if (d.updated != null) parts.push(`${d.updated} updated`);
-      if (d.unprocessed) parts.push(`${d.unprocessed} skipped`);
-      if (d.futwork_pushed != null) parts.push(`${d.futwork_pushed} synced to calling`);
-      if (d.futwork_failed != null && d.futwork_failed > 0) {
-        parts.push(`${d.futwork_failed} sync failed`);
+      const label = d.batch_name || batchName.trim() || file.name || "Upload";
+      if (d.status === "processing") {
+        if (d.upload_id) {
+          processingIdsRef.current = new Set([
+            ...processingIdsRef.current,
+            d.upload_id,
+          ]);
+        }
+        const rows = d.row_count != null ? ` (${d.row_count} rows)` : "";
+        toast.success(`${label} started${rows}. Processing in the background.`);
+      } else {
+        const parts = [];
+        if (d.new != null) parts.push(`${d.new} new`);
+        if (d.updated != null) parts.push(`${d.updated} updated`);
+        if (d.unprocessed) parts.push(`${d.unprocessed} skipped`);
+        if (d.futwork_pushed != null) parts.push(`${d.futwork_pushed} synced to calling`);
+        if (d.futwork_failed != null && d.futwork_failed > 0) {
+          parts.push(`${d.futwork_failed} sync failed`);
+        }
+        toast.success(
+          parts.length ? `Upload complete: ${parts.join(", ")}` : "Upload complete"
+        );
       }
-      toast.success(
-        parts.length ? `Upload complete: ${parts.join(", ")}` : "Upload complete"
-      );
       await fetchCampaign(false);
       await fetchUploadHistory();
+      await fetchEligibleFutworkCount();
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Failed to upload CSV");
       throw e;
@@ -515,11 +553,20 @@ const CampaignsPage = () => {
             {uploadSectionOpen && (
               <CardContent className="space-y-4">
                 <p className="text-sm text-[#A3A3A3]">
-                  CSV columns: <span className="text-white">Lead ID</span>,{" "}
-                  <span className="text-white">Name</span>,{" "}
-                  <span className="text-white">Mobile</span> (flexible header names accepted).
-                  Each Lead ID is unique; the same mobile with different IDs creates separate leads.
+                  CSV columns: <span className="text-white">Name</span>,{" "}
+                  <span className="text-white">Mobile</span> (required). Optional{" "}
+                  <span className="text-white">Lead ID</span> (flexible header names accepted).
+                  Each mobile is unique — re-uploading the same number updates the existing lead.
                 </p>
+                {hasProcessingUpload ? (
+                  <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+                    <Loader2 className="h-4 w-4 shrink-0 animate-spin text-amber-300" />
+                    <span>
+                      Upload batch processing in the background — you can leave this page.
+                      Progress appears in Recent uploads below.
+                    </span>
+                  </div>
+                ) : null}
                 {eligibleFutworkCount != null ? (
                   <p className="text-sm text-[#A3A3A3] rounded-lg border border-white/5 bg-white/[0.02] px-4 py-3">
                     <span className="text-white font-medium tabular-nums">{eligibleFutworkCount}</span>{" "}
@@ -551,7 +598,7 @@ const CampaignsPage = () => {
                       ) : (
                         <Upload className="h-4 w-4 mr-2" />
                       )}
-                      Upload New Leads
+                      {uploading ? "Starting upload…" : "Upload New Leads"}
                     </Button>
                     <Button
                       type="button"

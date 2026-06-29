@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 def ten_digit_phone(lead: Dict[str, Any]) -> str:
-    """Last 10 digits for Futwork dial-out only (not used as DB identity)."""
+    """Last 10 digits for Futwork dial-out and Raheja lead identity."""
     raw_phone = (
         lead.get("recipientPhoneNumber")
         or lead.get("mobile_digits")
@@ -26,13 +26,9 @@ def ten_digit_phone(lead: Dict[str, Any]) -> str:
     return db_digits if len(db_digits) == 10 else ""
 
 
-def futwork_recipient_data(lead: Dict[str, Any], customer_name: str) -> Dict[str, str]:
-    cid = str(lead.get("client_lead_id") or lead.get("external_id") or "").strip()
-    data: Dict[str, str] = {"customer_name": customer_name}
-    if cid:
-        data["leadId"] = cid
-        data["unique_identifier"] = cid
-    return data
+def futwork_recipient_data(_lead: Dict[str, Any], customer_name: str) -> Dict[str, str]:
+    """Raheja push: name only — mobile is the correlation key via recipientPhoneNumber."""
+    return {"customer_name": customer_name}
 
 
 def extract_futwork_lead_id(body: Any) -> str:
@@ -89,17 +85,11 @@ async def post_one_lead_to_futwork(
     from .lead_service import LeadService
 
     ls = LeadService(db)
-    cid = str(lead.get("client_lead_id") or lead.get("external_id") or "").strip()
-    if not cid:
-        return False, None
-
     phone = ten_digit_phone(lead)
     if len(phone) != 10:
-        logger.warning("Skipping lead %s: invalid phone for Futwork dial", cid)
-        await ls.apply_lead_futwork_sync(
-            client_lead_id=cid,
-            status="failed",
-            campaign_id=campaign_id,
+        logger.warning(
+            "Skipping lead: invalid phone for Futwork dial | mobile_digits=%s",
+            lead.get("mobile_digits"),
         )
         return False, None
 
@@ -126,7 +116,7 @@ async def post_one_lead_to_futwork(
             body = None
         futwork_lead_id = extract_futwork_lead_id(body)
         await ls.apply_lead_futwork_sync(
-            client_lead_id=cid,
+            mobile_digits=phone,
             status="pushed",
             futwork_lead_id=futwork_lead_id or None,
             campaign_id=campaign_id,
@@ -135,21 +125,21 @@ async def post_one_lead_to_futwork(
     except httpx.HTTPStatusError as e:
         logger.error(
             "Failed to push lead %s to Futwork | HTTPStatusError: %s | Response Body: %s",
-            cid,
+            phone,
             e,
             e.response.text if e.response else "",
             exc_info=True,
         )
         await ls.apply_lead_futwork_sync(
-            client_lead_id=cid,
+            mobile_digits=phone,
             status="failed",
             campaign_id=campaign_id,
         )
         return False, None
     except Exception as e:
-        logger.error("Failed to push lead %s to Futwork: %s", cid, e, exc_info=True)
+        logger.error("Failed to push lead %s to Futwork: %s", phone, e, exc_info=True)
         await ls.apply_lead_futwork_sync(
-            client_lead_id=cid,
+            mobile_digits=phone,
             status="failed",
             campaign_id=campaign_id,
         )

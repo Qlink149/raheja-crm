@@ -18,14 +18,18 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 
 const TEMPLATE_HEADERS = [
-  { key: "Lead ID", required: true },
-  { key: "Name", required: false },
-  { key: "Mobile", required: false },
+  { key: "Name", required: true, sample: "Sample Customer" },
+  { key: "Mobile", required: true, sample: "9999789877" },
 ];
 
+const TEMPLATE_OPTIONAL_HEADER = {
+  key: "Lead ID",
+  sample: "optional",
+};
+
 const TEMPLATE_CSV =
-  "Lead ID,Name,Mobile\n" +
-  "LEAD-001,Sample Customer,9999789877\n";
+  "Name,Mobile\n" +
+  "Sample Customer,9999789877\n";
 
 const formatSize = (bytes) => {
   if (!bytes && bytes !== 0) return "";
@@ -280,7 +284,7 @@ const UploadLeadsModal = ({
               </Button>
             </div>
             <div className="rounded-md border border-white/10 overflow-hidden">
-              <div className="grid grid-cols-3 bg-white/[0.03] px-4 py-2 text-xs font-medium text-white">
+              <div className="grid grid-cols-2 bg-white/[0.03] px-4 py-2 text-xs font-medium text-white">
                 {TEMPLATE_HEADERS.map((h) => (
                   <span key={h.key} className="truncate">
                     {h.key}
@@ -288,12 +292,19 @@ const UploadLeadsModal = ({
                   </span>
                 ))}
               </div>
-              <div className="grid grid-cols-3 px-4 py-2 text-xs italic text-[#525252]">
+              <div className="grid grid-cols-2 px-4 py-2 text-xs text-[#A3A3A3] border-t border-white/5">
                 {TEMPLATE_HEADERS.map((h) => (
-                  <span key={`sample-${h.key}`}>sample value</span>
+                  <span key={`sample-${h.key}`} className="truncate tabular-nums">
+                    {h.sample}
+                  </span>
                 ))}
               </div>
             </div>
+            <p className="mt-2 text-xs text-[#525252]">
+              Optional column:{" "}
+              <span className="text-[#737373]">{TEMPLATE_OPTIONAL_HEADER.key}</span>{" "}
+              (not included in the download template)
+            </p>
           </div>
 
           {/* Important Note */}
@@ -309,10 +320,15 @@ const UploadLeadsModal = ({
                     Mobile Number, Full Name).
                   </li>
                   <li>
-                    <span className="text-red-400">Lead ID</span> is required and must be unique.
-                    Same mobile with different Lead IDs creates separate leads.
+                    <span className="text-red-400">Mobile</span> is required (10-digit Indian
+                    number). Each mobile is unique — re-uploading the same number updates the
+                    existing lead.
                   </li>
-                  <li>Name and Mobile are optional; Mobile is required only for Calling Engine dial-out.</li>
+                  <li>
+                    <span className="text-white">Name</span> is recommended.{" "}
+                    <span className="text-white">Lead ID</span> is optional if your CSV includes
+                    it.
+                  </li>
                 </ul>
               </div>
             </div>
@@ -346,11 +362,16 @@ const UploadLeadsModal = ({
               className="bg-emerald-600 text-white hover:bg-emerald-500 disabled:bg-emerald-900/40 disabled:text-white/60"
             >
               {uploading ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Starting upload…
+                </>
               ) : (
-                <Upload className="h-4 w-4 mr-2" />
+                <>
+                  <Upload className="h-4 w-4 mr-2" />
+                  Upload file
+                </>
               )}
-              Upload file
             </Button>
           </div>
         </DialogFooter>

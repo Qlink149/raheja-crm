@@ -12,7 +12,7 @@ from ..utils.csv_processor import (
     process_call_report_row_to_call_history_and_lead_patches,
 )
 from ..core.config import settings
-from .futwork_push import post_one_lead_to_futwork
+from .futwork_push import post_one_lead_to_futwork, ten_digit_phone
 from .qualification_buckets import (
     VALID_DASHBOARD_BUCKETS,
     build_base_query,
@@ -37,16 +37,16 @@ def _safe_row(row: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _dedupe_leads_for_futwork(leads: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """One Futwork POST per client_lead_id; last row in upload order wins."""
-    by_client: Dict[str, Dict[str, Any]] = {}
+    """One Futwork POST per mobile_digits; last row in upload order wins."""
+    by_mobile: Dict[str, Dict[str, Any]] = {}
     tail: List[Dict[str, Any]] = []
     for lead in leads:
-        cid = str(lead.get("client_lead_id") or "").strip()
-        if cid:
-            by_client[cid] = lead
+        phone = ten_digit_phone(lead)
+        if len(phone) == 10:
+            by_mobile[phone] = lead
         else:
             tail.append(lead)
-    return list(by_client.values()) + tail
+    return list(by_mobile.values()) + tail
 
 
 class LeadService:
@@ -283,25 +283,24 @@ class LeadService:
                 })
                 continue
 
-            client_lead_id = str(lead_data.get("client_lead_id") or "").strip()
-            if not client_lead_id:
+            mobile_digits = str(lead_data.get("mobile_digits") or "").strip()
+            if len(mobile_digits) != 10:
                 failed_rows.append({
                     "row_index": idx,
-                    "reason": "missing Lead ID (client_lead_id)",
+                    "reason": "missing or invalid mobile (need 10-digit number)",
                     "raw": _safe_row(row),
                 })
                 continue
 
             try:
-                lead_data["external_id"] = client_lead_id
                 if upload_batch_id:
                     lead_data["upload_batch_id"] = upload_batch_id
                 if upload_batch_name:
                     lead_data["upload_batch_name"] = upload_batch_name
 
                 existing = await self.db.leads.find_one(
-                    {"client_lead_id": client_lead_id},
-                    {"_id": 1, "id": 1, "futwork_lead_id": 1},
+                    {"mobile_digits": mobile_digits},
+                    {"_id": 1, "id": 1, "futwork_lead_id": 1, "client_lead_id": 1},
                 )
 
                 if existing:
@@ -309,9 +308,12 @@ class LeadService:
                     patch.pop("futwork_sync_status", None)
                     if str(existing.get("futwork_lead_id") or "").strip():
                         patch.pop("futwork_lead_id", None)
+                    if not str(lead_data.get("client_lead_id") or "").strip():
+                        patch.pop("client_lead_id", None)
+                        patch.pop("external_id", None)
                     patch["updated_at"] = datetime.utcnow()
                     await self.db.leads.update_one(
-                        {"client_lead_id": client_lead_id},
+                        {"mobile_digits": mobile_digits},
                         {"$set": patch},
                     )
                     updated_count += 1
@@ -323,6 +325,8 @@ class LeadService:
                         "created_at": datetime.utcnow(),
                         "updated_at": datetime.utcnow(),
                     }
+                    if not doc.get("full_name"):
+                        doc["full_name"] = "Unknown"
                     await self.db.leads.insert_one(doc)
                     new_count += 1
                     if auto_assign_new:
@@ -490,14 +494,14 @@ class LeadService:
     async def apply_lead_futwork_sync(
         self,
         *,
-        client_lead_id: str,
+        mobile_digits: str,
         status: str,
         futwork_lead_id: Optional[str] = None,
         campaign_id: Optional[str] = None,
     ) -> None:
-        """Update futwork_sync_status for a lead matched by client_lead_id only."""
-        cid = str(client_lead_id or "").strip()
-        if not cid:
+        """Update futwork_sync_status for a lead matched by mobile_digits."""
+        phone = str(mobile_digits or "").strip()
+        if len(phone) != 10:
             return
         doc: Dict[str, Any] = {
             "futwork_sync_status": status,
@@ -507,13 +511,12 @@ class LeadService:
             doc["futwork_lead_id"] = futwork_lead_id
         if campaign_id:
             doc["campaign_id"] = campaign_id
-        await self.db.leads.update_one({"client_lead_id": cid}, {"$set": doc})
+        await self.db.leads.update_one({"mobile_digits": phone}, {"$set": doc})
 
     @staticmethod
     def _bulk_futwork_push_eligible_query() -> Dict[str, Any]:
-        """Leads eligible for DB bulk Futwork push (pending/failed, valid phone + client_lead_id)."""
+        """Leads eligible for DB bulk Futwork push (pending/failed, valid 10-digit mobile)."""
         return {
-            "client_lead_id": {"$exists": True, "$nin": ["", None]},
             "mobile_digits": {"$regex": r"^\d{10}$"},
             "$or": [
                 {"futwork_sync_status": {"$in": ["pending", "failed"]}},
@@ -581,7 +584,7 @@ class LeadService:
             return []
         query: Dict[str, Any] = {
             "upload_batch_id": batch_id,
-            "client_lead_id": {"$exists": True, "$nin": ["", None]},
+            "mobile_digits": {"$regex": r"^\d{10}$"},
         }
         if not include_repushed:
             query["$or"] = [
@@ -621,7 +624,7 @@ class LeadService:
         n_in = len(leads)
         leads = _dedupe_leads_for_futwork(leads)
         if len(leads) != n_in:
-            logger.info("Futwork push: deduped %s -> %s leads by client_lead_id", n_in, len(leads))
+            logger.info("Futwork push: deduped %s -> %s leads by mobile_digits", n_in, len(leads))
 
         pushed = 0
         failed = 0

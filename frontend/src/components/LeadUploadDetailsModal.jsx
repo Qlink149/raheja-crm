@@ -122,6 +122,12 @@ const LeadUploadDetailsModal = ({ open, onOpenChange, uploadId, onUpdated }) => 
           </div>
         ) : detail ? (
           <div className="space-y-4 text-sm">
+            {detail.status === "processing" ? (
+              <div className="flex items-center gap-2 rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-amber-200 text-xs">
+                <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+                This batch is still processing. Stats will update when complete.
+              </div>
+            ) : null}
             {detail.source === "bulk_push" ? (
               <p className="text-[#A3A3A3] text-xs rounded border border-violet-500/20 bg-violet-500/10 px-3 py-2">
                 This batch was created from a DB bulk Calling Engine push (no CSV file).
@@ -135,7 +141,16 @@ const LeadUploadDetailsModal = ({ open, onOpenChange, uploadId, onUpdated }) => 
               <span>Rows</span>
               <span className="text-white">{detail.row_count ?? "—"}</span>
               <span>Processed</span>
-              <span className="text-[#C5A059]">{detail.processed ?? "—"}</span>
+              <span className="text-[#C5A059]">
+                {detail.status === "processing" ? (
+                  <span className="inline-flex items-center gap-1 text-amber-300">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Processing…
+                  </span>
+                ) : (
+                  detail.processed ?? "—"
+                )}
+              </span>
               <span>Unprocessed</span>
               <span className="text-white">{detail.unprocessed ?? "—"}</span>
             </div>
