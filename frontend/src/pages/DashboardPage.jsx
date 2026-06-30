@@ -436,7 +436,7 @@ const DashboardPage = () => {
                       <Crown className="text-orange-500" size={24} />
                     </div>
                   </div>
-                  <p className="text-[#A1A1AA] text-sm">Total Min (Billed)</p>
+                  <p className="text-[#A1A1AA] text-sm">Total Min</p>
                   <p className="font-serif text-3xl text-white mt-1 tabular-nums truncate" title={String(displayStat("total_billed_minutes"))}>{displayStat("total_billed_minutes")}</p>
                 </div>
 
