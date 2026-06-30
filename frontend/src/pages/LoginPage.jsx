@@ -3,12 +3,12 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
-import { Eye, EyeOff, Building2 } from "lucide-react";
+import { Eye, EyeOff } from "lucide-react";
 import { BRAND } from "../lib/brandConfig";
 
 const LoginPage = () => {
-  const [email, setEmail] = useState("digital.marketing@krahejarealty.com");
-  const [password, setPassword] = useState("raheja@123");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [showTransition, setShowTransition] = useState(false);
@@ -32,25 +32,6 @@ const LoginPage = () => {
       const detail = err.response?.data?.detail;
       setError(typeof detail === "string" ? detail : "Invalid credentials");
       toast.error("Login failed. Please check your credentials.");
-      setIsLoading(false);
-    }
-  };
-
-  const handleDemoLogin = async () => {
-    setEmail("digital.marketing@krahejarealty.com");
-    setPassword("raheja@123");
-
-    try {
-      setIsLoading(true);
-      setError("");
-      const me = await login("digital.marketing@krahejarealty.com", "raheja@123");
-      setShowTransition(true);
-      const dest = me?.role === "admin" ? "/dashboard" : "/my-dashboard";
-      setTimeout(() => {
-        navigate(dest, { replace: true });
-      }, 3000);
-    } catch (err) {
-      setError("Failed to login with demo account");
       setIsLoading(false);
     }
   };
@@ -187,7 +168,7 @@ const LoginPage = () => {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="w-full h-12 px-4 bg-black/50 border border-white/20 rounded-md text-white focus:border-[#C5A059] transition-colors"
-                  placeholder="digital.marketing@krahejarealty.com"
+                  placeholder="you@krahejarealty.com"
                   required
                   data-testid="login-email-input"
                 />
@@ -234,19 +215,6 @@ const LoginPage = () => {
                 data-testid="login-submit-btn"
               >
                 {isLoading ? "Signing in..." : "Sign In"}
-              </button>
-
-              <button
-                type="button"
-                onClick={handleDemoLogin}
-                disabled={isLoading}
-                className="w-full h-12 btn-gold-outline font-medium rounded-none disabled:opacity-50"
-                data-testid="demo-login-btn"
-              >
-                <span className="flex items-center justify-center gap-2">
-                  <Building2 size={18} />
-                  Demo Login as utpal
-                </span>
               </button>
             </form>
 

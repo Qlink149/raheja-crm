@@ -178,7 +178,7 @@ async def initialize_db():
 
 
 async def _seed_default_users(db):
-    """Ensure users from seed_users.json exist (ravinder admin + sales team)."""
+    """Ensure the single admin user exists."""
     import sys
     from pathlib import Path
 
@@ -190,6 +190,6 @@ async def _seed_default_users(db):
 
         n = await seed_users(db)
         if n:
-            logger.info("Seeded %s new user(s) from seed_users.json", n)
+            logger.info("Seeded admin user (%s)", "it@krahejarealty.com")
     except Exception as e:
         logger.warning("User seed skipped: %s", e)
