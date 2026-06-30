@@ -1,12 +1,10 @@
 import { Toaster as Sonner, toast } from "sonner"
 
 const Toaster = ({
-  theme = "dark",
   ...props
 }) => {
   return (
     <Sonner
-      theme={theme}
       className="toaster group"
       toastOptions={{
         classNames: {

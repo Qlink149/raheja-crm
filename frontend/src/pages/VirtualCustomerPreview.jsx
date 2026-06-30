@@ -75,13 +75,13 @@ const VirtualCustomerPreview = () => {
               <Sparkles className="text-[#C5A059]" size={20} />
             </div>
             <div>
-              <p className="text-[#C5A059] text-xs uppercase tracking-widest font-semibold mb-1">
+              <p className="page-kicker text-xs mb-1">
                 Preview mode
               </p>
-              <h1 className="font-serif text-2xl text-white">Virtual Customer</h1>
-              <p className="text-[#A1A1AA] text-sm mt-1 max-w-2xl">
+              <h1 className="page-title text-2xl">Virtual Customer</h1>
+              <p className="page-subtitle text-sm mt-1 max-w-2xl">
                 Preview: {unlockedLimit} of{" "}
-                <span className="text-white font-medium tabular-nums">
+                <span className="lead-card-name font-medium tabular-nums">
                   {totalMatching.toLocaleString()}
                 </span>{" "}
                 {dispositionLabel} leads · {BRAND.supportMessage}
@@ -99,7 +99,7 @@ const VirtualCustomerPreview = () => {
         </div>
       </div>
 
-      <div className="flex items-center gap-2 text-[#A3A3A3] px-1">
+      <div className="flex items-center gap-2 lead-card-meta px-1">
         <Users className="w-4 h-4" />
         <span className="text-sm">
           <span className="text-[#C5A059] font-semibold">{dispositionLabel}</span> pipeline
@@ -118,8 +118,8 @@ const VirtualCustomerPreview = () => {
         <LeadGridSkeleton count={9} />
       ) : gridItems.length === 0 ? (
         <div className="glass-card rounded-xl p-12 text-center">
-          <p className="text-white font-medium mb-2">No {dispositionLabel} leads yet</p>
-          <p className="text-[#737373] text-sm">
+          <p className="lead-card-name font-medium mb-2">No {dispositionLabel} leads yet</p>
+          <p className="page-subtitle text-sm">
             When AI calls produce {dispositionLabel} dispositions, preview leads will appear here.
           </p>
         </div>
@@ -152,7 +152,7 @@ const VirtualCustomerPreview = () => {
       )}
 
       {!loading && lockedTeasers.length > 0 && totalMatching > unlockedLimit && (
-        <p className="text-center text-[#525252] text-xs pb-4">
+        <p className="text-center lead-card-footer text-xs pb-4">
           +{Math.max(0, totalMatching - unlockedLimit - lockedTeasers.length).toLocaleString()}{" "}
           more {dispositionLabel} leads available after unlock
         </p>

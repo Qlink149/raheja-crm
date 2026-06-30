@@ -1,7 +1,6 @@
 import { memo } from "react";
 import {
   ChevronRight,
-  Crown,
   Flame,
   Sun,
   Snowflake,
@@ -9,6 +8,11 @@ import {
   TrendingDown,
 } from "lucide-react";
 import { Badge } from "./ui/badge";
+import {
+  getQualificationBadgeClass,
+  getBudgetBadgeClass,
+  SYNC_PENDING_BADGE_CLASS,
+} from "../lib/leadBadgeStyles";
 
 function PlatformSyncBadge({ status }) {
   const s = (status || "pending").toLowerCase();
@@ -21,10 +25,7 @@ function PlatformSyncBadge({ status }) {
     );
   }
   return (
-    <Badge
-      variant="outline"
-      className="border-amber-500/30 bg-amber-900/30 text-amber-300 shrink-0"
-    >
+    <Badge variant="outline" className={`shrink-0 ${SYNC_PENDING_BADGE_CLASS}`}>
       Pending
     </Badge>
   );
@@ -44,16 +45,6 @@ const getDisplayName = (name) => {
 
 const getLeadQualificationTag = (lead) => {
   return (lead?.qualification_category || "").trim();
-};
-
-const getQualificationBadgeClass = (qc) => {
-  const v = (qc || "").trim();
-  if (v === "Warm") return "bg-orange-500/20 text-orange-300 border border-orange-500/30";
-  if (v === "Dormant") return "bg-gray-500/20 text-gray-300 border border-gray-500/30";
-  if (v === "Qualified") return "bg-emerald-900/30 text-emerald-300 border border-emerald-500/30";
-  if (v === "Hot") return "badge-hot";
-  if (v === "Cold") return "badge-cold";
-  return "text-[#A3A3A3] bg-white/5 border border-white/5";
 };
 
 const getQualificationIcon = (qc) => {
@@ -105,34 +96,25 @@ const LeadCard = memo(function LeadCard({ lead, onSelect }) {
         <div className="flex-1 min-w-0 overflow-hidden">
           <div className="flex items-center gap-2 mb-1 min-w-0">
             <h3
-              className="text-white font-medium truncate flex-1 min-w-0"
+              className="lead-card-name truncate flex-1 min-w-0"
               title={getDisplayName(lead.full_name)}
             >
               {getDisplayName(lead.full_name)}
             </h3>
-
           </div>
-          <p className="text-[#A3A3A3] text-sm truncate mb-2" title={lead.project || "N/A"}>
+          <p className="lead-card-meta text-sm truncate mb-2" title={lead.project || "N/A"}>
             {lead.project || "N/A"}
           </p>
           <div className="flex items-center gap-2 flex-wrap">
             {qualificationTag ? (
-              <span
-                className={`px-2 py-0.5 text-xs rounded-sm flex items-center gap-1 flex-shrink-0 ${getQualificationBadgeClass(
-                  qualificationTag
-                )}`}
-              >
+              <span className={`flex-shrink-0 ${getQualificationBadgeClass(qualificationTag)}`}>
                 {getQualificationIcon(qualificationTag)}
                 {qualificationTag}
               </span>
             ) : null}
             <PlatformSyncBadge status={lead.futwork_sync_status} />
             <span
-              className={`text-xs whitespace-nowrap px-2 py-0.5 rounded-sm tabular-nums ${
-                isHniBudget(lead)
-                  ? "badge-hni font-semibold"
-                  : "text-[#A3A3A3] bg-white/5 border border-white/5"
-              }`}
+              className={`tabular-nums ${getBudgetBadgeClass(isHniBudget(lead))}`}
               data-testid={`lead-budget-${lead.id}`}
             >
               {formatBudgetLabel(lead)}
@@ -144,7 +126,7 @@ const LeadCard = memo(function LeadCard({ lead, onSelect }) {
       </div>
 
       <div className="mt-4 pt-3 border-t border-white/5 flex items-center justify-end gap-2 min-w-0">
-        <span className="text-[#525252] text-xs truncate">{lead.location_category}</span>
+        <span className="lead-card-footer text-xs truncate">{lead.location_category}</span>
       </div>
     </div>
   );

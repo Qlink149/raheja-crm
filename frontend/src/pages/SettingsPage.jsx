@@ -68,10 +68,10 @@ const SettingsPage = () => {
 
               <div className="min-w-0">
                 <p className="kicker mb-3">Workspace</p>
-                <h1 className="font-serif text-4xl text-white tracking-tight mb-2">
+                <h1 className="page-title text-4xl tracking-tight mb-2">
                   Settings
                 </h1>
-                <p className="text-[#A3A3A3] max-w-2xl">
+                <p className="page-subtitle max-w-2xl">
                   A unified control room for your profile, notifications, team
                   access, and integrations is on the way. We&apos;re keeping the
                   surface minimal until each setting is wired to a real,

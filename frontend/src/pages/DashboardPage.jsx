@@ -288,8 +288,8 @@ const DashboardPage = () => {
         <div className="absolute inset-0 bg-gradient-to-r from-black/80 via-black/60 to-black/30" />
         <div className="relative z-10 h-full flex items-center px-8">
           <div>
-            <p className="text-[#C5A059] text-sm font-medium tracking-widest uppercase">{BRAND.name}</p>
-            <h1 className="font-serif text-3xl lg:text-4xl text-white mt-1" data-testid="dashboard-greeting">
+            <p className="page-kicker">{BRAND.name}</p>
+            <h1 className="page-title text-3xl lg:text-4xl mt-1" data-testid="dashboard-greeting">
               Hello, {user?.full_name?.split(" ")[0] || user?.email?.split("@")[0] || "there"}
             </h1>
             <p className="text-white/70 mt-1 text-sm">

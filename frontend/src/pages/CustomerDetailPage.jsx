@@ -48,6 +48,7 @@ import {
   formatLeadBudgetDisplay,
   isUsableCallSummary,
 } from "../lib/leadBudgetDisplay";
+import { getCallTimelineBadgeClass } from "../lib/callBadgeStyles";
 import CallRecordingPlayer from "../components/CallRecordingPlayer";
 import {
   Select,
@@ -315,7 +316,7 @@ const CustomerDetailPage = () => {
               <div className="flex-1 min-w-0">
                 <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4 mb-6 min-w-0">
                   <div className="min-w-0">
-                    <h1 className="font-serif text-3xl text-white mb-2 tracking-tight truncate">
+                    <h1 className="page-title text-3xl mb-2 tracking-tight truncate">
                       {getDisplayName()}
                     </h1>
                     <p className="text-[#A3A3A3] truncate">
@@ -358,7 +359,7 @@ const CustomerDetailPage = () => {
 
                 <div className="flex flex-wrap gap-4 mb-6 items-end">
                   <div className="min-w-[200px]">
-                    <p className="text-xs text-[#525252] mb-1">Sales qualification</p>
+                    <p className="text-xs field-label mb-1">Sales qualification</p>
                     <Select
                       value={lead.sales_qualification || "none"}
                       onValueChange={handleSalesQualification}
@@ -379,7 +380,7 @@ const CustomerDetailPage = () => {
                   </div>
                   {isAdmin && (
                     <div className="min-w-[200px]">
-                      <p className="text-xs text-[#525252] mb-1">Assigned to</p>
+                      <p className="text-xs field-label mb-1">Assigned to</p>
                       <Select
                         value={lead.assigned_user_id || "none"}
                         onValueChange={handleAssign}
@@ -410,9 +411,9 @@ const CustomerDetailPage = () => {
                       <MapPin className="w-4 h-4 text-[#C5A059]" />
                     </div>
                     <div className="min-w-0">
-                      <p className="text-xs text-[#525252]">Location</p>
+                      <p className="text-xs field-label">Location</p>
                       <p
-                        className="text-sm text-white truncate"
+                        className="field-value truncate"
                         title={displayValue(
                           lead.current_residential_location ||
                             lead.current_residence_location ||
@@ -442,8 +443,8 @@ const CustomerDetailPage = () => {
                       <Home className="w-4 h-4 text-[#C5A059]" />
                     </div>
                     <div className="min-w-0">
-                      <p className="text-xs text-[#525252]">Residence Type</p>
-                      <p className="text-sm text-white truncate" title={displayValue(lead.current_residence_type)}>
+                      <p className="text-xs field-label">Residence Type</p>
+                      <p className="field-value truncate" title={displayValue(lead.current_residence_type)}>
                         {displayValue(lead.current_residence_type)}
                       </p>
                     </div>
@@ -453,8 +454,8 @@ const CustomerDetailPage = () => {
                       <Building2 className="w-4 h-4 text-[#C5A059]" />
                     </div>
                     <div className="min-w-0">
-                      <p className="text-xs text-[#525252]">Project Interest</p>
-                      <p className="text-sm text-white truncate" title={displayValue(lead.project)}>
+                      <p className="text-xs field-label">Project Interest</p>
+                      <p className="field-value truncate" title={displayValue(lead.project)}>
                         {displayValue(lead.project)}
                       </p>
                     </div>
@@ -464,8 +465,8 @@ const CustomerDetailPage = () => {
                       <Target className="w-4 h-4 text-[#C5A059]" />
                     </div>
                     <div className="min-w-0">
-                      <p className="text-xs text-[#525252]">Intent</p>
-                      <p className="text-sm text-white truncate" title={lead.intent_category || "N/A"}>
+                      <p className="text-xs field-label">Intent</p>
+                      <p className="field-value truncate" title={lead.intent_category || "N/A"}>
                         {lead.intent_category || "N/A"}
                       </p>
                     </div>
@@ -630,9 +631,9 @@ const DataDNAItem = ({ icon: Icon, label, value }) => {
     <div className="p-4 bg-white/5 rounded-lg border border-white/5 hover:border-[#C5A059]/30 transition-colors overflow-hidden">
       <div className="flex items-center gap-2 mb-2">
         <Icon className="w-4 h-4 text-[#C5A059] flex-shrink-0" strokeWidth={1.5} />
-        <span className="text-xs text-[#525252] uppercase tracking-wider truncate">{label}</span>
+        <span className="field-label uppercase tracking-wider truncate">{label}</span>
       </div>
-      <p className="text-white text-sm font-medium truncate" title={displayVal || "N/A"}>
+      <p className="field-value truncate" title={displayVal || "N/A"}>
         {displayVal || "N/A"}
       </p>
     </div>
@@ -813,19 +814,6 @@ const formatCallDate = (call) => {
   return formatDateTimeIST(raw);
 };
 
-const dispositionStyle = (disposition, status) => {
-  const d = (disposition || "").toLowerCase();
-  const s = (status || "").toLowerCase();
-  if (d === "interested") return "bg-emerald-900/30 text-emerald-300 border-emerald-500/30";
-  if (d === "not interested") return "bg-red-900/30 text-red-300 border-red-500/30";
-  if (d === "busy" || s === "busy") return "bg-yellow-900/30 text-yellow-300 border-yellow-500/30";
-  if (d === "dropped") return "bg-orange-900/30 text-orange-300 border-orange-500/30";
-  if (s === "completed") return "bg-emerald-900/30 text-emerald-300 border-emerald-500/30";
-  if (s === "no-answer") return "bg-zinc-800/60 text-zinc-300 border-white/10";
-  if (s === "failed") return "bg-red-900/30 text-red-300 border-red-500/30";
-  return "bg-white/5 text-[#A3A3A3] border-white/10";
-};
-
 const CallCard = ({ call }) => {
   const canExpand = canExpandCallSummary(call);
   const cachedSummary = isUsableCallSummary(call.ai_call_summary)
@@ -875,7 +863,7 @@ const CallCard = ({ call }) => {
               <span className="text-[#C5A059] tabular-nums flex-shrink-0">{formatDuration(call.duration)}</span>
             ) : null}
           </div>
-          <span className={`px-2 py-0.5 rounded text-[11px] border flex-shrink-0 ${dispositionStyle(call.disposition, call.status)}`}>
+          <span className={`flex-shrink-0 ${getCallTimelineBadgeClass(call.disposition, call.status)}`}>
             {label}
           </span>
         </div>
@@ -911,7 +899,7 @@ const CallCard = ({ call }) => {
                 Summarising with GPT-4o…
               </div>
             ) : summary ? (
-              <p className="text-sm text-white leading-relaxed">{summary}</p>
+              <p className="text-sm field-value leading-relaxed">{summary}</p>
             ) : (
               <p className="text-sm text-[#A3A3A3]">Summary unavailable.</p>
             )}

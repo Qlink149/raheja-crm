@@ -39,6 +39,7 @@ import {
 } from "../components/ui/select";
 import { ScrollArea } from "../components/ui/scroll-area";
 import { UI_COPY } from "../lib/brandLabels";
+import { getQualificationFilterClass } from "../lib/leadBadgeStyles";
 
 function PlatformSyncBadge({ status }) {
   const s = (status || "pending").toLowerCase();
@@ -545,11 +546,11 @@ const VirtualCustomerPage = () => {
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
       >
-        <p className="text-[#C5A059] text-sm font-medium tracking-widest uppercase">Lead Explorer</p>
-        <h1 className="font-serif text-3xl text-white" data-testid="virtual-customer-title">
+        <p className="page-kicker">Lead Explorer</p>
+        <h1 className="page-title text-3xl" data-testid="virtual-customer-title">
           Virtual Customer Explorer
         </h1>
-        <p className="text-[#A1A1AA] mt-1">
+        <p className="page-subtitle mt-1">
           {isInitialLoading
             ? "Loading pipeline…"
             : totalCount != null && totalCount > 0
@@ -578,21 +579,19 @@ const VirtualCustomerPage = () => {
             <button
               type="button"
               onClick={clearDashboardDrill}
-              className="text-xs text-[#A1A1AA] hover:text-white underline"
+              className="text-xs page-subtitle hover:text-[var(--text-primary)] underline"
             >
               Clear dashboard filter
             </button>
           </div>
         )}
-        <motion.div className="mt-4 inline-flex rounded-lg border border-white/10 bg-[#141414] p-1">
+        <div className="filter-segment mt-4">
           <button
             type="button"
             data-testid="futwork-filter-pushed"
             onClick={() => handleFutworkSyncChange("pushed")}
-            className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${
-              futworkSyncFilter === "pushed"
-                ? "bg-[#C5A059] text-black"
-                : "text-[#A3A3A3] hover:text-white"
+            className={`filter-segment-btn ${
+              futworkSyncFilter === "pushed" ? "filter-segment-btn--active" : ""
             }`}
           >
             {UI_COPY.engineCalled}
@@ -601,10 +600,8 @@ const VirtualCustomerPage = () => {
             type="button"
             data-testid="futwork-filter-pending"
             onClick={() => handleFutworkSyncChange("pending")}
-            className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${
-              futworkSyncFilter === "pending"
-                ? "bg-[#C5A059] text-black"
-                : "text-[#A3A3A3] hover:text-white"
+            className={`filter-segment-btn ${
+              futworkSyncFilter === "pending" ? "filter-segment-btn--active" : ""
             }`}
           >
             Pending
@@ -613,29 +610,27 @@ const VirtualCustomerPage = () => {
             type="button"
             data-testid="futwork-filter-all"
             onClick={() => handleFutworkSyncChange("all")}
-            className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${
-              futworkSyncFilter === "all"
-                ? "bg-[#C5A059] text-black"
-                : "text-[#A3A3A3] hover:text-white"
+            className={`filter-segment-btn ${
+              futworkSyncFilter === "all" ? "filter-segment-btn--active" : ""
             }`}
           >
             All
           </button>
-        </motion.div>
+        </div>
       </motion.div>
 
-        <motion.div className="flex flex-col lg:flex-row min-h-[70vh] rounded-xl border border-white/10 overflow-hidden">
+        <motion.div className="flex flex-col lg:flex-row min-h-[70vh] rounded-xl overflow-hidden vc-layout">
           {/* Category Panel */}
           <motion.div
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
-            className="w-full lg:w-72 border-b lg:border-b-0 lg:border-r border-white/10 bg-[#0A0A0A] p-6"
+            className="w-full lg:w-72 border-b lg:border-b-0 lg:border-r vc-category-panel p-6"
           >
-            <h2 className="font-serif text-xl text-white mb-6">Categories</h2>
+            <h2 className="page-title text-xl mb-6">Categories</h2>
 
             {/* Category Buttons */}
             {urlDashboardBucket ? (
-              <p className="text-xs text-[#A1A1AA] mb-6 px-1">
+              <p className="text-xs page-subtitle mb-6 px-1">
                 Category filters locked while{" "}
                 <span className="text-[#C5A059]">{dashboardDrillLabel}</span> is active.
                 Clear dashboard filter to browse by category.
@@ -647,10 +642,8 @@ const VirtualCustomerPage = () => {
                     key={cat.id}
                     data-testid={`category-${cat.id}`}
                     onClick={() => handleCategoryChange(cat.id)}
-                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-300 ${
-                      activeCategory === cat.id
-                        ? "bg-[#C5A059]/20 border border-[#C5A059]/30 text-[#C5A059]"
-                        : "text-[#A3A3A3] hover:bg-white/5 hover:text-white"
+                    className={`vc-category-btn ${
+                      activeCategory === cat.id ? "vc-category-btn--active" : ""
                     }`}
                   >
                     <cat.icon className="w-5 h-5" strokeWidth={1.5} />
@@ -671,10 +664,8 @@ const VirtualCustomerPage = () => {
                     key={opt}
                     data-testid={`budget-filter-${opt}`}
                     onClick={() => setBudgetFilter(opt)}
-                    className={`w-full text-left px-4 py-2 text-sm rounded transition-all ${
-                      budgetFilter === opt
-                        ? "bg-[#C5A059] text-black font-medium"
-                        : "text-[#A3A3A3] hover:bg-white/5"
+                    className={`vc-subfilter-btn ${
+                      budgetFilter === opt ? "vc-subfilter-btn--active" : ""
                     }`}
                   >
                     {opt === "all" ? "All Budgets" : opt}
@@ -693,10 +684,8 @@ const VirtualCustomerPage = () => {
                     key={opt}
                     data-testid={`location-filter-${opt}`}
                     onClick={() => setLocationFilter(opt)}
-                    className={`w-full text-left px-4 py-2 text-sm rounded transition-all ${
-                      locationFilter === opt
-                        ? "bg-[#C5A059] text-black font-medium"
-                        : "text-[#A3A3A3] hover:bg-white/5"
+                    className={`vc-subfilter-btn ${
+                      locationFilter === opt ? "vc-subfilter-btn--active" : ""
                     }`}
                   >
                     {opt === "all" ? "All Locations" : opt}
@@ -715,10 +704,8 @@ const VirtualCustomerPage = () => {
                     key={opt}
                     data-testid={`intent-filter-${opt}`}
                     onClick={() => setIntentFilter(opt)}
-                    className={`w-full text-left px-4 py-2 text-sm rounded transition-all ${
-                      intentFilter === opt
-                        ? "bg-[#C5A059] text-black font-medium"
-                        : "text-[#A3A3A3] hover:bg-white/5"
+                    className={`vc-subfilter-btn ${
+                      intentFilter === opt ? "vc-subfilter-btn--active" : ""
                     }`}
                   >
                     {opt === "all" ? "All Intents" : opt}
@@ -736,10 +723,8 @@ const VirtualCustomerPage = () => {
                   <button
                     data-testid="project-filter-all"
                     onClick={() => setProjectFilter("all")}
-                    className={`w-full text-left px-4 py-2 text-sm rounded transition-all ${
-                      projectFilter === "all"
-                        ? "bg-[#C5A059] text-black font-medium"
-                        : "text-[#A3A3A3] hover:bg-white/5"
+                    className={`vc-subfilter-btn ${
+                      projectFilter === "all" ? "vc-subfilter-btn--active" : ""
                     }`}
                   >
                     All Projects
@@ -749,10 +734,8 @@ const VirtualCustomerPage = () => {
                       key={proj.name}
                       data-testid={`project-filter-${proj.name}`}
                       onClick={() => setProjectFilter(proj.name)}
-                      className={`w-full text-left px-4 py-2 text-sm rounded transition-all ${
-                        projectFilter === proj.name
-                          ? "bg-[#C5A059] text-black font-medium"
-                          : "text-[#A3A3A3] hover:bg-white/5"
+                      className={`vc-subfilter-btn ${
+                        projectFilter === proj.name ? "vc-subfilter-btn--active" : ""
                       }`}
                     >
                       <span className="block truncate">{proj.name}</span>
@@ -769,7 +752,7 @@ const VirtualCustomerPage = () => {
                 Lead Qualification
               </p>
               {urlDashboardBucket ? (
-                <p className="text-xs text-[#A1A1AA] px-1">
+                <p className="text-xs page-subtitle px-1">
                   Locked while dashboard filter{" "}
                   <span className="text-[#C5A059]">{dashboardDrillLabel}</span> is active.
                   Clear dashboard filter to change qualification.
@@ -781,11 +764,10 @@ const VirtualCustomerPage = () => {
                       key={opt}
                       data-testid={`qc-filter-${opt}`}
                       onClick={() => setQualificationFilter(opt)}
-                      className={`px-3 py-1 text-xs rounded-full transition-all ${
+                      className={`transition-all ${getQualificationFilterClass(
+                        opt,
                         qualificationFilter === opt
-                          ? getQualificationBadgeClass(opt === "all" ? "" : opt)
-                          : "bg-white/5 text-[#A3A3A3] hover:bg-white/10"
-                      } ${qualificationFilter === opt && opt === "all" ? "bg-[#C5A059] text-black" : ""}`}
+                      )}`}
                     >
                       {opt === "all" ? "All" : opt}
                     </button>
@@ -796,7 +778,7 @@ const VirtualCustomerPage = () => {
           </motion.div>
 
           {/* Leads Grid */}
-          <div className="flex-1 p-6 overflow-hidden">
+          <div className="flex-1 p-6 overflow-hidden vc-leads-panel">
             {/* Search Header */}
             <motion.div
               initial={{ opacity: 0, y: -10 }}
@@ -832,7 +814,7 @@ const VirtualCustomerPage = () => {
                   </SelectContent>
                 </Select>
               )}
-              <div className="flex items-center gap-2 text-[#A3A3A3]">
+              <div className="flex items-center gap-2 lead-card-meta">
                 <Users className="w-4 h-4" />
                 <span className="text-sm">
                   {hasLoadedOnce ? (
@@ -919,7 +901,7 @@ const VirtualCustomerPage = () => {
                 </div>
               )}
               {!hasMore && leads.length > 0 && totalCount != null && (
-                <p className="text-center text-[#525252] text-xs py-4">
+                <p className="text-center lead-card-footer text-xs py-4">
                   All {totalCount.toLocaleString()} leads loaded
                 </p>
               )}

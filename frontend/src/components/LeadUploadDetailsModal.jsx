@@ -11,6 +11,10 @@ import {
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { api, downloadAuthenticatedFile } from "../lib/api";
+import {
+  formatUploadDateIST,
+  formatUploadTimeIST,
+} from "../lib/dateUtils";
 
 const LeadUploadDetailsModal = ({ open, onOpenChange, uploadId, onUpdated }) => {
   const [loading, setLoading] = useState(false);
@@ -138,6 +142,18 @@ const LeadUploadDetailsModal = ({ open, onOpenChange, uploadId, onUpdated }) => 
               <span className="text-white">{detail.batch_name || "—"}</span>
               <span>File</span>
               <span className="text-white break-all">{detail.filename || "—"}</span>
+              <span>Uploaded</span>
+              <span className="text-white tabular-nums">
+                {detail.created_at ? (
+                  <>
+                    {formatUploadDateIST(detail.created_at)}
+                    <span className="text-[#A3A3A3]"> · </span>
+                    {formatUploadTimeIST(detail.created_at)} IST
+                  </>
+                ) : (
+                  "—"
+                )}
+              </span>
               <span>Rows</span>
               <span className="text-white">{detail.row_count ?? "—"}</span>
               <span>Processed</span>

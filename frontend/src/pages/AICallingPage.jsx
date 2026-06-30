@@ -45,6 +45,7 @@ import {
   formatCallHistoryDateLabel,
   formatDateTimeIST,
 } from "../lib/dateUtils";
+import { getDispositionBadgeClass, getStatusBadgeClass } from "../lib/callBadgeStyles";
 
 const PAGE_SIZE = 50;
 const ROW_HEIGHT = 64; // px, matches the grid row's effective height
@@ -64,29 +65,6 @@ const formatDuration = (seconds) => {
 };
 
 const formatDate = (dateStr) => formatDateTimeIST(dateStr);
-
-const DISPOSITION_STYLES = {
-  Interested: "bg-emerald-900/30 text-emerald-300 border-emerald-500/30",
-  "Partially Interested": "bg-cyan-900/30 text-cyan-300 border-cyan-500/30",
-  "Site Visit": "bg-indigo-900/30 text-indigo-300 border-indigo-500/30",
-  "Not Interested": "bg-red-900/30 text-red-300 border-red-500/30",
-  Busy: "bg-yellow-900/30 text-yellow-300 border-yellow-500/30",
-  Dropped: "bg-orange-900/30 text-orange-300 border-orange-500/30",
-  "Incomplete conversation": "bg-gray-900/30 text-gray-300 border-gray-500/30",
-};
-
-const STATUS_STYLES = {
-  completed: "bg-emerald-900/30 text-emerald-300",
-  "no-answer": "bg-yellow-900/30 text-yellow-300",
-  busy: "bg-orange-900/30 text-orange-300",
-  failed: "bg-red-900/30 text-red-300",
-};
-
-const getDispositionBadge = (d) =>
-  DISPOSITION_STYLES[d] || "bg-gray-900/30 text-gray-300 border-gray-500/30";
-
-const getStatusBadge = (s) =>
-  STATUS_STYLES[s] || "bg-gray-900/30 text-gray-300";
 
 const StatusIcon = ({ status }) => {
   switch (status) {
@@ -146,7 +124,7 @@ const CallRow = memo(
         <div className="min-w-0">
           {call.disposition && (
             <span
-              className={`px-2 py-1 rounded text-xs border inline-block truncate max-w-full ${getDispositionBadge(
+              className={`inline-block truncate max-w-full ${getDispositionBadgeClass(
                 call.disposition
               )}`}
             >
@@ -158,9 +136,7 @@ const CallRow = memo(
         {/* Status */}
         <div>
           <span
-            className={`px-2 py-1 rounded text-xs flex items-center gap-1 w-fit ${getStatusBadge(
-              call.status
-            )}`}
+            className={`w-fit capitalize ${getStatusBadgeClass(call.status)}`}
           >
             <StatusIcon status={call.status} />
             <span className="capitalize">{call.status}</span>
@@ -506,11 +482,11 @@ const AICallingPage = () => {
           transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
           className="mb-8"
         >
-          <p className="text-[#C5A059] text-sm font-medium tracking-widest uppercase mb-2">Voice AI</p>
-          <h1 className="font-serif text-3xl text-white mb-2 tracking-tight">
+          <p className="page-kicker mb-2">Voice AI</p>
+          <h1 className="page-title text-3xl mb-2 tracking-tight">
             AI Calling Engine
           </h1>
-          <p className="text-[#A1A1AA]">
+          <p className="page-subtitle">
             Live record of every AI-placed call for Raheja campaigns
           </p>
         </motion.div>

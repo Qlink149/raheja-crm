@@ -64,9 +64,40 @@ export function formatDateOnlyIST(dateStr) {
   const d = parseUtc(dateStr);
   if (!d) return "—";
   return d.toLocaleDateString("en-GB", {
-    timeZone: "Asia/Kolkata",
+    timeZone: IST_TIMEZONE,
     day: "2-digit",
     month: "2-digit",
     year: "2-digit",
   });
+}
+
+/** Table-friendly upload date (IST). */
+export function formatUploadDateIST(dateStr) {
+  const d = parseUtc(dateStr);
+  if (!d) return "—";
+  return d.toLocaleDateString("en-IN", {
+    timeZone: IST_TIMEZONE,
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+/** Table-friendly upload time (IST). */
+export function formatUploadTimeIST(dateStr) {
+  const d = parseUtc(dateStr);
+  if (!d) return "—";
+  return d.toLocaleTimeString("en-IN", {
+    timeZone: IST_TIMEZONE,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  });
+}
+
+/** Full upload timestamp for tooltips (IST). */
+export function formatUploadDateTimeIST(dateStr) {
+  const d = parseUtc(dateStr);
+  if (!d) return "—";
+  return `${formatUploadDateIST(dateStr)} · ${formatUploadTimeIST(dateStr)} IST`;
 }

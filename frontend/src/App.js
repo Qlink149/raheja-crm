@@ -21,7 +21,7 @@ const NotificationsPage = lazy(() => import("./pages/NotificationsPage"));
 const DashboardLayout = lazy(() => import("./components/layout/DashboardLayout"));
 
 const LoadingScreen = () => (
-  <div className="min-h-screen bg-[#0A0A0A] flex items-center justify-center">
+  <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: 'var(--bg-primary)' }}>
     <p className="text-[#C5A059] animate-pulse">Loading...</p>
   </div>
 );
@@ -210,17 +210,7 @@ function App() {
     <BrowserRouter>
       <AuthProvider>
         <AppRoutes />
-        <Toaster
-          position="top-right"
-          theme="dark"
-          toastOptions={{
-            style: {
-              background: "#1A1A1A",
-              color: "#EDEDED",
-              border: "1px solid rgba(255,255,255,0.1)",
-            },
-          }}
-        />
+        <Toaster position="top-right" />
       </AuthProvider>
     </BrowserRouter>
   );

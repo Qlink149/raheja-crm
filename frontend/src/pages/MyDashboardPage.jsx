@@ -90,11 +90,11 @@ const MyDashboardPage = () => {
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-8">
       <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}>
-        <p className="text-[#C5A059] text-sm uppercase tracking-wider mb-1">My Dashboard</p>
-        <h1 className="font-serif text-3xl text-white">
+        <p className="page-kicker mb-1">My Dashboard</p>
+        <h1 className="page-title text-3xl">
           Welcome, {user?.full_name?.split(" ")[0] || "Agent"}
         </h1>
-        <p className="text-[#737373] text-sm mt-1">Leads and metrics assigned to you</p>
+        <p className="page-subtitle text-sm mt-1">Leads and metrics assigned to you</p>
       </motion.div>
 
       {loading ? (

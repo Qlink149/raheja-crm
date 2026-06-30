@@ -24,6 +24,11 @@ import { UI_COPY } from "../lib/brandLabels";
 import EmptyState from "../components/feedback/EmptyState";
 import { CampaignSkeleton } from "../components/feedback/Skeletons";
 import { api, campaignsAPI, isBackendConfigured } from "../lib/api";
+import {
+  formatUploadDateIST,
+  formatUploadTimeIST,
+  formatUploadDateTimeIST,
+} from "../lib/dateUtils";
 
 const LEAD_UPLOAD_MAX_MB = 10;
 import { Button } from "../components/ui/button";
@@ -322,15 +327,6 @@ const CampaignsPage = () => {
     }
   };
 
-  const formatTableDate = (value) => {
-    if (!value) return "—";
-    try {
-      return format(new Date(value), "d MMM yyyy");
-    } catch {
-      return "—";
-    }
-  };
-
   const formatClock = (d) => {
     if (!d) return "";
     try {
@@ -384,9 +380,9 @@ const CampaignsPage = () => {
           {/* Header */}
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div>
-              <p className="text-[#C5A059] text-sm font-medium tracking-widest uppercase mb-2">Outreach</p>
+              <p className="page-kicker mb-2">Outreach</p>
               <div className="flex flex-wrap items-center gap-3">
-                <h1 className="font-serif text-2xl sm:text-3xl text-white tracking-tight">
+                <h1 className="page-title text-2xl sm:text-3xl tracking-tight">
                   {campaign.name || "Campaign"}
                 </h1>
                 <Badge variant="outline" className={badge.className}>
@@ -666,6 +662,7 @@ const CampaignsPage = () => {
                         <TableHead className="text-[#A3A3A3]">Batch name</TableHead>
                         <TableHead className="text-[#A3A3A3]">Type</TableHead>
                         <TableHead className="text-[#A3A3A3]">Date</TableHead>
+                        <TableHead className="text-[#A3A3A3]">Time</TableHead>
                         <TableHead className="text-[#A3A3A3]">Processed</TableHead>
                         <TableHead className="text-[#A3A3A3]">Unprocessed</TableHead>
                         <TableHead className="text-[#A3A3A3] w-[100px]">Actions</TableHead>
@@ -673,8 +670,9 @@ const CampaignsPage = () => {
                     </TableHeader>
                     <TableBody>
                       {uploadHistory.map((row) => {
-                          const dateLabel = formatTableDate(row.created_at);
-                          const tooltipLine = [row.filename, formatDateTime(row.created_at)]
+                          const dateLabel = formatUploadDateIST(row.created_at);
+                          const timeLabel = formatUploadTimeIST(row.created_at);
+                          const tooltipLine = [row.filename, formatUploadDateTimeIST(row.created_at)]
                             .filter(Boolean)
                             .join(" • ");
                           return (
@@ -703,7 +701,7 @@ const CampaignsPage = () => {
                                   </Badge>
                                 )}
                               </TableCell>
-                              <TableCell className="text-white font-medium">
+                              <TableCell className="text-white font-medium tabular-nums">
                                 {tooltipLine ? (
                                   <Tooltip>
                                     <TooltipTrigger asChild>
@@ -716,6 +714,9 @@ const CampaignsPage = () => {
                                 ) : (
                                   dateLabel
                                 )}
+                              </TableCell>
+                              <TableCell className="text-[#A3A3A3] tabular-nums">
+                                {timeLabel}
                               </TableCell>
                               <TableCell className="py-3 px-4 text-[#C5A059] font-medium tabular-nums">
                                 {row.status === "processing" ? (

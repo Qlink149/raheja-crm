@@ -23,6 +23,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { api } from "../lib/api";
 import { parseCallTranscriptTurns, WHITELABEL_AGENT_LABEL } from "../utils/callTranscript";
 import { formatDateTimeIST } from "../lib/dateUtils";
+import { getDispositionBadgeClass, getStatusBadgeClass } from "../lib/callBadgeStyles";
 
 const formatDuration = (seconds) => {
   if (!seconds) return "0s";
@@ -33,29 +34,6 @@ const formatDuration = (seconds) => {
 };
 
 const formatDate = (dateStr) => formatDateTimeIST(dateStr);
-
-const DISPOSITION_STYLES = {
-  Interested: "bg-emerald-900/30 text-emerald-300 border-emerald-500/30",
-  "Partially Interested": "bg-cyan-900/30 text-cyan-300 border-cyan-500/30",
-  "Site Visit": "bg-indigo-900/30 text-indigo-300 border-indigo-500/30",
-  "Not Interested": "bg-red-900/30 text-red-300 border-red-500/30",
-  Busy: "bg-yellow-900/30 text-yellow-300 border-yellow-500/30",
-  Dropped: "bg-orange-900/30 text-orange-300 border-orange-500/30",
-  "Incomplete conversation": "bg-gray-900/30 text-gray-300 border-gray-500/30",
-};
-
-const STATUS_STYLES = {
-  completed: "bg-emerald-900/30 text-emerald-300",
-  "no-answer": "bg-yellow-900/30 text-yellow-300",
-  busy: "bg-orange-900/30 text-orange-300",
-  failed: "bg-red-900/30 text-red-300",
-};
-
-const getDispositionBadge = (d) =>
-  DISPOSITION_STYLES[d] || "bg-gray-900/30 text-gray-300 border-gray-500/30";
-
-const getStatusBadge = (s) =>
-  STATUS_STYLES[s] || "bg-gray-900/30 text-gray-300";
 
 const StatusIcon = ({ status }) => {
   switch (status) {
@@ -132,9 +110,9 @@ const CallDetailDialog = ({ open, onOpenChange, call, onDispositionChange }) => 
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="surface-elevated text-white max-w-3xl w-[calc(100vw-2rem)] h-[min(90vh,820px)] p-0 overflow-hidden flex flex-col gap-0">
+      <DialogContent className="surface-elevated max-w-3xl w-[calc(100vw-2rem)] h-[min(90vh,820px)] p-0 overflow-hidden flex flex-col gap-0">
         <DialogHeader className="px-6 pt-6 pb-4 border-b border-white/10 flex-shrink-0">
-          <DialogTitle className="text-white flex items-center gap-3 text-base">
+          <DialogTitle className="flex items-center gap-3 text-base">
             <PhoneCall className="w-5 h-5 text-[#C5A059]" />
             <span>Call Details</span>
             <span className="text-[#A3A3A3] text-sm font-normal truncate">
@@ -154,7 +132,7 @@ const CallDetailDialog = ({ open, onOpenChange, call, onDispositionChange }) => 
                 <div className="min-w-0">
                   <p className="text-xs text-[#525252] mb-1">Status</p>
                   <span
-                    className={`px-2 py-1 rounded text-xs inline-flex items-center gap-1 ${getStatusBadge(
+                    className={`inline-flex items-center gap-1 ${getStatusBadgeClass(
                       call.status
                     )}`}
                   >
@@ -172,7 +150,7 @@ const CallDetailDialog = ({ open, onOpenChange, call, onDispositionChange }) => 
                   <p className="text-xs text-[#525252] mb-1">Disposition</p>
                   {call.disposition ? (
                     <span
-                      className={`px-2 py-1 rounded text-xs border inline-block truncate max-w-full ${getDispositionBadge(
+                      className={`inline-block truncate max-w-full ${getDispositionBadgeClass(
                         call.disposition
                       )}`}
                     >

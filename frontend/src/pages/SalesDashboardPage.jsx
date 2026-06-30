@@ -308,7 +308,7 @@ const SalesDashboardPage = () => {
     return (
       <motion.div className="space-y-8">
         <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }}>
-          <h1 className="font-serif text-3xl text-white" data-testid="sales-dashboard-title">
+          <h1 className="page-title text-3xl" data-testid="sales-dashboard-title">
             Sales Team Dashboard
           </h1>
         </motion.div>
@@ -328,10 +328,10 @@ const SalesDashboardPage = () => {
   return (
     <motion.div className="space-y-8">
       <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }}>
-        <h1 className="font-serif text-3xl text-white" data-testid="sales-dashboard-title">
+        <h1 className="page-title text-3xl" data-testid="sales-dashboard-title">
           Sales Team Dashboard
         </h1>
-        <p className="text-[#A1A1AA] mt-2">
+        <p className="page-subtitle mt-2">
           Performance analytics and lead distribution across {teamRepCount} presales agents
           {usersSalesCount != null && usersSalesCount !== teamRepCount ? (
             <span className="block text-[#52525B] text-sm mt-1">
